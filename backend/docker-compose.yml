@@ -1,0 +1,64 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: sa_postgres
+    environment:
+      POSTGRES_DB: sa_db
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin123456
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      - "5435:5432"
+    networks:
+      - sa_network
+
+  influxdb:
+    image: influxdb:2.7-alpine
+    container_name: sa_influx
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_RETENTION: 90d
+      DOCKER_INFLUXDB_INIT_USERNAME: admin
+      DOCKER_INFLUXDB_INIT_BUCKET: sa_realtime
+      DOCKER_INFLUXDB_INIT_PASSWORD: admin123456
+      DOCKER_INFLUXDB_INIT_ORG: smart_agriculture
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ABCxyzQWErty123@456#789*
+    ports:
+      - "8086:8086"
+    networks:
+      - sa_network
+
+  mosquitto:
+    image: eclipse-mosquitto:2.0
+    container_name: sa_broker
+    ports:
+      - "1883:1883"
+    environment:
+      MOSQUITTO_USERNAME: admin
+      MOSQUITTO_PASSWORD: admin123456
+    command: >
+      sh -c "
+      mosquitto_passwd -c -b /mosquitto/config/passwd.txt $${MOSQUITTO_USERNAME} $${MOSQUITTO_PASSWORD} &&
+      mosquitto -c /mosquitto-no-auth.conf
+      "
+    networks:
+      - sa_network
+
+  grafana:
+    image: grafana/grafana:10.2.3
+    container_name: sa_grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin123456
+      GF_INSTALL_PLUGINS: ''
+    ports:
+      - "3000:3000"
+    networks:
+      - sa_network
+
+networks:
+  sa_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.25.0.0/16
