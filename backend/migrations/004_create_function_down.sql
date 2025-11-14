@@ -1,0 +1,18 @@
+DROP FUNCTION IF EXISTS get_user_farms(UUID);
+DROP FUNCTION IF EXISTS get_farm_overview(UUID);
+DROP FUNCTION IF EXISTS get_mcu_survey_points(UUID);
+DROP FUNCTION IF EXISTS get_farm_mcus(UUID);
+DROP FUNCTION IF EXISTS update_mcu_status(VARCHAR, VARCHAR);
+DROP FUNCTION IF EXISTS update_survey_point_status(UUID, VARCHAR);
+DROP FUNCTION IF EXISTS get_farm_structure(UUID);
+DROP FUNCTION IF EXISTS create_device_command(UUID, VARCHAR, VARCHAR);
+DROP FUNCTION IF EXISTS update_command_status(UUID, VARCHAR);
+DROP FUNCTION IF EXISTS get_pending_commands(INT);
+DROP FUNCTION IF EXISTS get_command_history(UUID, VARCHAR, INT);
+DROP FUNCTION IF EXISTS check_user_farm_permission(UUID, UUID, VARCHAR);
+DROP FUNCTION IF EXISTS get_user_by_username(VARCHAR);
+DROP FUNCTION IF EXISTS get_user_by_email(VARCHAR);
+DROP FUNCTION IF EXISTS create_farm_with_owner(UUID, VARCHAR, TEXT, VARCHAR);
+DROP FUNCTION IF EXISTS add_user_to_farm(UUID, UUID, VARCHAR);
+DROP FUNCTION IF EXISTS remove_user_from_farm(UUID, UUID);
+DROP FUNCTION IF EXISTS get_mcu_by_code(VARCHAR);
