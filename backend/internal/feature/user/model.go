@@ -21,6 +21,10 @@ func (User) TableName() string {
 	return "tbl_users"
 }
 
+func (u User) ToResponse() *UserResponse {
+	return &UserResponse{}
+}
+
 type CreateUserRequest struct {
 	Username string  `json:"username" validate:"required,min=3,max=100"`
 	Email    string  `json:"email" validate:"required,email"`

@@ -3,6 +3,11 @@ package main
 import (
 	"backend/infra/database"
 	"backend/infra/network"
+	"backend/internal/feature/farm"
+	"backend/internal/feature/mcu"
+	"backend/internal/feature/sensorData"
+	"backend/internal/feature/surveyPoint"
+	"backend/internal/feature/user"
 	"backend/internal/shared"
 	"context"
 	"fmt"
@@ -23,6 +28,12 @@ type Application struct {
 	MQTT      *network.MQTTClient
 	WebSocket *network.WebSocketHub
 	Router    *gin.Engine
+
+	UserHandler        *user.Handler
+	FarmHandler        *farm.Handler
+	MCUHandler         *mcu.Handler
+	SurveyPointHandler *surveyPoint.Handler
+	SensorDataHandler  *sensorData.Handler
 }
 
 func main() {
@@ -66,6 +77,10 @@ func initializeApp(config *shared.Config) (*Application, error) {
 	wsHub := network.NewWebSocketHub(&config.WebSocket)
 	app.WebSocket = wsHub
 
+	if err := app.initializeHandlers(); err != nil {
+		return nil, fmt.Errorf("failed to initialize handlers: %w", err)
+	}
+
 	if config.Server.Environment == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	}
@@ -73,6 +88,33 @@ func initializeApp(config *shared.Config) (*Application, error) {
 
 	log.Println("Application initialized successfully")
 	return app, nil
+}
+
+func (app *Application) initializeHandlers() error {
+	db := app.Postgres.GetDB()
+
+	userRepo := user.NewRepository(db)
+	userService := user.NewService(userRepo)
+	app.UserHandler = user.NewHandler(userService)
+
+	farmRepo := farm.NewRepository(db)
+	farmService := farm.NewService(farmRepo)
+	app.FarmHandler = farm.NewHandler(farmService)
+
+	mcuRepo := mcu.NewRepository(db)
+	mcuService := mcu.NewService(mcuRepo)
+	app.MCUHandler = mcu.NewHandler(mcuService)
+
+	surveyPointRepo := surveyPoint.NewRepository(db)
+	surveyPointService := surveyPoint.NewService(surveyPointRepo)
+	app.SurveyPointHandler = surveyPoint.NewHandler(surveyPointService)
+
+	sensorDataRepo := sensorData.NewRepository(db, app.InfluxDB, app.Config.InfluxDB.Bucket)
+	sensorDataService := sensorData.NewService(sensorDataRepo)
+	app.SensorDataHandler = sensorData.NewHandler(sensorDataService)
+
+	log.Println("All handlers initialized successfully")
+	return nil
 }
 
 func (app *Application) setupRoutes() {
@@ -124,14 +166,20 @@ func (app *Application) setupRoutes() {
 		}
 	})
 
-	v1 := app.Router.Group("/api/v1")
+	api := app.Router.Group("/api/v1")
 	{
-		v1.GET("/stats/db", func(c *gin.Context) {
+		app.UserHandler.RegisterRoutes(api)
+		app.FarmHandler.RegisterRoutes(api)
+		app.MCUHandler.RegisterRoutes(api)
+		app.SurveyPointHandler.RegisterRoutes(api)
+		app.SensorDataHandler.RegisterRoutes(api)
+
+		api.GET("/stats/db", func(c *gin.Context) {
 			stats := app.Postgres.GetStats()
 			c.JSON(http.StatusOK, stats)
 		})
 
-		v1.POST("/mqtt/publish", func(c *gin.Context) {
+		api.POST("/mqtt/publish", func(c *gin.Context) {
 			var req struct {
 				Topic   string      `json:"topic" binding:"required"`
 				Message interface{} `json:"message" binding:"required"`
@@ -150,7 +198,7 @@ func (app *Application) setupRoutes() {
 			c.JSON(http.StatusOK, gin.H{"status": "published"})
 		})
 
-		v1.POST("/ws/broadcast", func(c *gin.Context) {
+		api.POST("/ws/broadcast", func(c *gin.Context) {
 			var req struct {
 				Message interface{} `json:"message" binding:"required"`
 			}
