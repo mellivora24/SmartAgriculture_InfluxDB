@@ -53,7 +53,7 @@ func (r *repository) GetByUsername(ctx context.Context, username string) (*User,
 		Raw("SELECT * FROM get_user_by_username(?)", username).
 		Scan(&result).Error
 
-	if err != nil {
+	if err != nil || result.UserID == uuid.Nil {
 		return nil, err
 	}
 
@@ -82,7 +82,7 @@ func (r *repository) GetByEmail(ctx context.Context, email string) (*User, error
 		Raw("SELECT * FROM get_user_by_email(?)", email).
 		Scan(&result).Error
 
-	if err != nil {
+	if err != nil || result.UserID == uuid.Nil {
 		return nil, err
 	}
 

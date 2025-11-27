@@ -22,7 +22,14 @@ func (User) TableName() string {
 }
 
 func (u User) ToResponse() *UserResponse {
-	return &UserResponse{}
+	return &UserResponse{
+		ID:        u.ID,
+		Username:  u.Username,
+		Email:     u.Email,
+		Phone:     u.Phone,
+		FullName:  u.FullName,
+		CreatedAt: u.CreatedAt,
+	}
 }
 
 type CreateUserRequest struct {

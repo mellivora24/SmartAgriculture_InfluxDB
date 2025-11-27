@@ -1,6 +1,7 @@
 package user
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -17,6 +18,8 @@ func NewHandler(service Service) *Handler {
 }
 
 func (h *Handler) Register(c *gin.Context) {
+	fmt.Println("Goi ham dang ki voi du lieu:", c.Request.Body)
+
 	var req CreateUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
