@@ -53,3 +53,7 @@ func ValidateToken(tokenString string) (*JWTClaims, error) {
 
 	return claims, nil
 }
+
+func ParseUUID(uuidStr string) (uuid.UUID, error) {
+	return uuid.Parse(uuidStr)
+}

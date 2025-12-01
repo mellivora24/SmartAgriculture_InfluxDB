@@ -8,8 +8,12 @@ import (
 	"backend/internal/feature/sensorData"
 	"backend/internal/feature/surveyPoint"
 	"backend/internal/feature/user"
+	mqttPkg "backend/internal/realtime/mqtt"
+	realtimeShared "backend/internal/realtime/shared"
+	wsPkg "backend/internal/realtime/websocket"
 	"backend/internal/shared"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -28,13 +32,22 @@ type Application struct {
 	InfluxDB  *database.InfluxDB
 	MQTT      *network.MQTTClient
 	WebSocket *network.WebSocketHub
-	Router    *gin.Engine
+
+	Router *gin.Engine
 
 	UserHandler        *user.Handler
 	FarmHandler        *farm.Handler
 	MCUHandler         *mcu.Handler
 	SurveyPointHandler *surveyPoint.Handler
 	SensorDataHandler  *sensorData.Handler
+
+	// Realtime handlers
+	MQTTHandler *mqttPkg.Handler
+	WSHandler   *wsPkg.Handler
+
+	// Realtime services
+	MQTTService realtimeShared.MQTTService
+	WSService   realtimeShared.WebSocketService
 }
 
 func main() {
@@ -45,6 +58,11 @@ func main() {
 	}
 
 	defer app.cleanup()
+
+	// Initialize realtime handlers
+	if err := app.initializeRealtimeHandlers(); err != nil {
+		log.Fatalf("Failed to initialize realtime handlers: %v", err)
+	}
 
 	app.setupRoutes()
 	app.startServer()
@@ -114,12 +132,32 @@ func (app *Application) initializeHandlers() error {
 	sensorDataService := sensorData.NewService(sensorDataRepo)
 	app.SensorDataHandler = sensorData.NewHandler(sensorDataService)
 
+	// Initialize realtime services
+	app.MQTTService = mqttPkg.NewService(app.MQTT)
+	app.WSService = wsPkg.NewService(app.WebSocket)
+
+	// Initialize realtime handlers
+	app.MQTTHandler = mqttPkg.NewHandler(app.MQTTService, app.WSService, sensorDataService)
+	app.WSHandler = wsPkg.NewHandler(app.WSService, app.MQTTService, sensorDataService)
+
 	log.Println("All handlers initialized successfully")
 	return nil
 }
 
+func (app *Application) initializeRealtimeHandlers() error {
+	log.Println("Initializing realtime handlers...")
+
+	// Subscribe to MQTT topics
+	if err := app.MQTTHandler.Init(); err != nil {
+		return fmt.Errorf("failed to initialize MQTT handler: %w", err)
+	}
+
+	log.Println("Realtime handlers initialized successfully")
+	return nil
+}
+
 func (app *Application) setupRoutes() {
-	// Public routes - không cần authentication
+	// Public routes
 	app.Router.GET("/health", func(c *gin.Context) {
 		health := map[string]interface{}{
 			"status": "ok",
@@ -154,10 +192,14 @@ func (app *Application) setupRoutes() {
 		c.JSON(http.StatusOK, health)
 	})
 
+	app.Router.GET("/ws", func(c *gin.Context) {
+		app.WSHandler.HandleConnection(c.Writer, c.Request)
+	})
+
 	// API routes
 	api := app.Router.Group("/api/v1")
 	{
-		// Public auth routes - không cần token
+		// Public auth routes
 		auth := api.Group("/users")
 		{
 			auth.POST("/register", app.UserHandler.Register)
@@ -176,17 +218,19 @@ func (app *Application) setupRoutes() {
 				users.GET("", app.UserHandler.List)
 			}
 
-			// All protected
+			// Feature routes
 			app.FarmHandler.RegisterRoutes(protected)
 			app.MCUHandler.RegisterRoutes(protected)
 			app.SurveyPointHandler.RegisterRoutes(protected)
 			app.SensorDataHandler.RegisterRoutes(protected)
 
+			// Database stats
 			protected.GET("/stats/db", func(c *gin.Context) {
 				stats := app.Postgres.GetStats()
 				c.JSON(http.StatusOK, stats)
 			})
 
+			// testing
 			protected.POST("/mqtt/publish", func(c *gin.Context) {
 				var req struct {
 					Topic   string      `json:"topic" binding:"required"`
@@ -198,7 +242,7 @@ func (app *Application) setupRoutes() {
 					return
 				}
 
-				if err := app.MQTT.Publish(req.Topic, req.Message, false); err != nil {
+				if err := app.MQTTService.PublishJSON(req.Topic, req.Message); err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 					return
 				}
@@ -206,9 +250,12 @@ func (app *Application) setupRoutes() {
 				c.JSON(http.StatusOK, gin.H{"status": "published"})
 			})
 
+			// testing
 			protected.POST("/ws/broadcast", func(c *gin.Context) {
 				var req struct {
-					Message interface{} `json:"message" binding:"required"`
+					MCUCode string          `json:"mcu_code" binding:"required"`
+					Topic   string          `json:"topic" binding:"required"`
+					Message json.RawMessage `json:"message" binding:"required"`
 				}
 
 				if err := c.ShouldBindJSON(&req); err != nil {
@@ -216,7 +263,12 @@ func (app *Application) setupRoutes() {
 					return
 				}
 
-				if err := app.WebSocket.BroadcastJSON(req.Message); err != nil {
+				wsMsg := realtimeShared.WSMessage{
+					Topic:   req.Topic,
+					Payload: req.Message,
+				}
+
+				if err := app.WSService.BroadcastToMCU(req.MCUCode, wsMsg); err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 					return
 				}
@@ -225,36 +277,6 @@ func (app *Application) setupRoutes() {
 			})
 		}
 	}
-
-	app.Router.GET("/ws", func(c *gin.Context) {
-		token := c.Query("token")
-		if token == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"error": "token required in query parameter",
-			})
-			return
-		}
-
-		claims, err := shared.ValidateToken(token)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"error": "invalid or expired token",
-			})
-			return
-		}
-
-		clientID := claims.Username
-		if clientID == "" {
-			clientID = fmt.Sprintf("client_%d", time.Now().UnixNano())
-		}
-
-		if err := app.WebSocket.HandleWebSocket(c, clientID); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": "Failed to upgrade connection",
-			})
-			return
-		}
-	})
 
 	log.Println("Routes configured")
 }
