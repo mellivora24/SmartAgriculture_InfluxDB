@@ -8,7 +8,7 @@ import (
 
 type SurveyPoint struct {
 	ID          uuid.UUID `json:"id" gorm:"type:uuid;primary_key;default:gen_random_uuid()"`
-	MCUID       uuid.UUID `json:"mcu_id" gorm:"type:uuid;not null"`
+	MCUID       uuid.UUID `json:"mcu_id" gorm:"column:mcu_id;type:uuid;not null"`
 	Name        string    `json:"name" gorm:"type:varchar(255);not null"`
 	Description *string   `json:"description,omitempty" gorm:"type:text"`
 	Status      string    `json:"status" gorm:"type:varchar(50);default:'connecting'"`
