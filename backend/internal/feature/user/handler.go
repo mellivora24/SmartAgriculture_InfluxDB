@@ -1,7 +1,6 @@
 package user
 
 import (
-	"fmt"
 	"net/http"
 	"strconv"
 
@@ -18,8 +17,6 @@ func NewHandler(service Service) *Handler {
 }
 
 func (h *Handler) Register(c *gin.Context) {
-	fmt.Println("Goi ham dang ki voi du lieu:", c.Request.Body)
-
 	var req CreateUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -118,16 +115,4 @@ func (h *Handler) List(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": users})
-}
-
-func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
-	users := r.Group("/users")
-	{
-		users.POST("/register", h.Register)
-		users.POST("/login", h.Login)
-		users.GET("/:id", h.GetByID)
-		users.PUT("/:id", h.Update)
-		users.DELETE("/:id", h.Delete)
-		users.GET("", h.List)
-	}
 }

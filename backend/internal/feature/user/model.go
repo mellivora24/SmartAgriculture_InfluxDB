@@ -58,4 +58,5 @@ type UserResponse struct {
 	Phone     *string   `json:"phone,omitempty"`
 	FullName  *string   `json:"full_name,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
+	Token     string    `json:"token,omitempty"`
 }

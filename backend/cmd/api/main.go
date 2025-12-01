@@ -10,6 +10,7 @@ import (
 	"backend/internal/feature/user"
 	"backend/internal/shared"
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -118,6 +119,7 @@ func (app *Application) initializeHandlers() error {
 }
 
 func (app *Application) setupRoutes() {
+	// Public routes - không cần authentication
 	app.Router.GET("/health", func(c *gin.Context) {
 		health := map[string]interface{}{
 			"status": "ok",
@@ -152,8 +154,96 @@ func (app *Application) setupRoutes() {
 		c.JSON(http.StatusOK, health)
 	})
 
+	// API routes
+	api := app.Router.Group("/api/v1")
+	{
+		// Public auth routes - không cần token
+		auth := api.Group("/users")
+		{
+			auth.POST("/register", app.UserHandler.Register)
+			auth.POST("/login", app.UserHandler.Login)
+		}
+
+		protected := api.Group("")
+		protected.Use(shared.AuthMiddleware())
+		{
+			// User routes (protected)
+			users := protected.Group("/users")
+			{
+				users.GET("/:id", app.UserHandler.GetByID)
+				users.PUT("/:id", app.UserHandler.Update)
+				users.DELETE("/:id", app.UserHandler.Delete)
+				users.GET("", app.UserHandler.List)
+			}
+
+			// All protected
+			app.FarmHandler.RegisterRoutes(protected)
+			app.MCUHandler.RegisterRoutes(protected)
+			app.SurveyPointHandler.RegisterRoutes(protected)
+			app.SensorDataHandler.RegisterRoutes(protected)
+
+			protected.GET("/stats/db", func(c *gin.Context) {
+				stats := app.Postgres.GetStats()
+				c.JSON(http.StatusOK, stats)
+			})
+
+			protected.POST("/mqtt/publish", func(c *gin.Context) {
+				var req struct {
+					Topic   string      `json:"topic" binding:"required"`
+					Message interface{} `json:"message" binding:"required"`
+				}
+
+				if err := c.ShouldBindJSON(&req); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+					return
+				}
+
+				if err := app.MQTT.Publish(req.Topic, req.Message, false); err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+					return
+				}
+
+				c.JSON(http.StatusOK, gin.H{"status": "published"})
+			})
+
+			protected.POST("/ws/broadcast", func(c *gin.Context) {
+				var req struct {
+					Message interface{} `json:"message" binding:"required"`
+				}
+
+				if err := c.ShouldBindJSON(&req); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+					return
+				}
+
+				if err := app.WebSocket.BroadcastJSON(req.Message); err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+					return
+				}
+
+				c.JSON(http.StatusOK, gin.H{"status": "broadcasted"})
+			})
+		}
+	}
+
 	app.Router.GET("/ws", func(c *gin.Context) {
-		clientID := c.Query("client_id")
+		token := c.Query("token")
+		if token == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error": "token required in query parameter",
+			})
+			return
+		}
+
+		claims, err := shared.ValidateToken(token)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error": "invalid or expired token",
+			})
+			return
+		}
+
+		clientID := claims.Username
 		if clientID == "" {
 			clientID = fmt.Sprintf("client_%d", time.Now().UnixNano())
 		}
@@ -165,57 +255,6 @@ func (app *Application) setupRoutes() {
 			return
 		}
 	})
-
-	api := app.Router.Group("/api/v1")
-	{
-		app.UserHandler.RegisterRoutes(api)
-		app.FarmHandler.RegisterRoutes(api)
-		app.MCUHandler.RegisterRoutes(api)
-		app.SurveyPointHandler.RegisterRoutes(api)
-		app.SensorDataHandler.RegisterRoutes(api)
-
-		api.GET("/stats/db", func(c *gin.Context) {
-			stats := app.Postgres.GetStats()
-			c.JSON(http.StatusOK, stats)
-		})
-
-		api.POST("/mqtt/publish", func(c *gin.Context) {
-			var req struct {
-				Topic   string      `json:"topic" binding:"required"`
-				Message interface{} `json:"message" binding:"required"`
-			}
-
-			if err := c.ShouldBindJSON(&req); err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-				return
-			}
-
-			if err := app.MQTT.Publish(req.Topic, req.Message, false); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-				return
-			}
-
-			c.JSON(http.StatusOK, gin.H{"status": "published"})
-		})
-
-		api.POST("/ws/broadcast", func(c *gin.Context) {
-			var req struct {
-				Message interface{} `json:"message" binding:"required"`
-			}
-
-			if err := c.ShouldBindJSON(&req); err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-				return
-			}
-
-			if err := app.WebSocket.BroadcastJSON(req.Message); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-				return
-			}
-
-			c.JSON(http.StatusOK, gin.H{"status": "broadcasted"})
-		})
-	}
 
 	log.Println("Routes configured")
 }
@@ -231,7 +270,7 @@ func (app *Application) startServer() {
 
 	go func() {
 		log.Printf("Server starting on %s", addr)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("Failed to start server: %v", err)
 		}
 	}()

@@ -1,6 +1,7 @@
 package user
 
 import (
+	"backend/internal/shared"
 	"context"
 	"errors"
 	"fmt"
@@ -55,7 +56,15 @@ func (s *service) Register(ctx context.Context, req *CreateUserRequest) (*UserRe
 		return nil, fmt.Errorf("failed to create user: %w", err)
 	}
 
-	return user.ToResponse(), nil
+	token, err := shared.GenerateToken(user.ID, user.Username, user.Email)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate token: %w", err)
+	}
+
+	response := user.ToResponse()
+	response.Token = token
+
+	return response, nil
 }
 
 func (s *service) Login(ctx context.Context, req *LoginRequest) (*UserResponse, error) {
@@ -71,7 +80,15 @@ func (s *service) Login(ctx context.Context, req *LoginRequest) (*UserResponse, 
 		return nil, errors.New("invalid username or password")
 	}
 
-	return user.ToResponse(), nil
+	token, err := shared.GenerateToken(user.ID, user.Username, user.Email)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate token: %w", err)
+	}
+
+	response := user.ToResponse()
+	response.Token = token
+
+	return response, nil
 }
 
 func (s *service) GetByID(ctx context.Context, id uuid.UUID) (*UserResponse, error) {
