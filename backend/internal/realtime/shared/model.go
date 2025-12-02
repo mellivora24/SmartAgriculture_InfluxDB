@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 )
 
+// MQTT Topics
 const (
 	MQTTTopicSensorData      = "user/+/mcu/+/data"
 	MQTTTopicControlResponse = "user/+/mcu/+/control/response"
@@ -15,6 +16,7 @@ const (
 	MQTTTopicHealthResponse  = "/health/response"
 )
 
+// WebSocket Topics
 const (
 	WSTopicConnect         = "connect"
 	WSTopicSensorData      = "sensor_data"
@@ -24,12 +26,14 @@ const (
 	WSTopicError           = "error"
 )
 
+// MQTTMessage represents an MQTT message
 type MQTTMessage struct {
 	Topic     string      `json:"topic"`
 	Payload   interface{} `json:"payload"`
 	Timestamp time.Time   `json:"timestamp"`
 }
 
+// SensorDataPayload represents sensor data from MCU
 type SensorDataPayload struct {
 	MCUCode       string                 `json:"mcu_code"`
 	SurveyPointID uuid.UUID              `json:"survey_point_id"`
@@ -40,24 +44,29 @@ type SensorDataPayload struct {
 	Extra         map[string]interface{} `json:"extra,omitempty"`
 }
 
+// ControlRequestPayload represents a control request from client
 type ControlRequestPayload struct {
-	MCUCode    string                 `json:"mcu_code"`
-	DeviceName string                 `json:"device_name"`
-	Command    string                 `json:"command"`
-	Value      interface{}            `json:"value,omitempty"`
-	Extra      map[string]interface{} `json:"extra,omitempty"`
+	SurveyPointID uuid.UUID              `json:"survey_point_id"`
+	MCUCode       string                 `json:"mcu_code"`
+	DeviceName    string                 `json:"device_name"`
+	Command       string                 `json:"command"` // "on" or "off"
+	Value         interface{}            `json:"value,omitempty"`
+	Extra         map[string]interface{} `json:"extra,omitempty"`
 }
 
+// ControlResponsePayload represents a control response from MCU
 type ControlResponsePayload struct {
-	MCUCode    string      `json:"mcu_code"`
-	DeviceName string      `json:"device_name"`
-	Command    string      `json:"command"`
-	Status     string      `json:"status"` // success, failed, pending
-	Message    string      `json:"message,omitempty"`
-	Value      interface{} `json:"value,omitempty"`
-	ExecutedAt time.Time   `json:"executed_at"`
+	SurveyPointID uuid.UUID   `json:"survey_point_id"`
+	MCUCode       string      `json:"mcu_code"`
+	DeviceName    string      `json:"device_name"`
+	Command       string      `json:"command"`
+	Status        string      `json:"status"` // success, failed, pending
+	Message       string      `json:"message,omitempty"`
+	Value         interface{} `json:"value,omitempty"`
+	ExecutedAt    time.Time   `json:"executed_at"`
 }
 
+// DeviceConfig represents device configuration
 type DeviceConfig struct {
 	ID         uuid.UUID `json:"id"`
 	Name       string    `json:"name"`
@@ -66,6 +75,7 @@ type DeviceConfig struct {
 	IsActive   bool      `json:"is_active"`
 }
 
+// MQTTAlert represents alert notification from MCU
 type MQTTAlert struct {
 	MCUCode  string    `json:"mcu_code"`
 	Title    string    `json:"title"`
@@ -74,17 +84,20 @@ type MQTTAlert struct {
 	Time     time.Time `json:"time"`
 }
 
+// WSMessage represents a WebSocket message
 type WSMessage struct {
 	Topic     string          `json:"topic"`
 	Payload   json.RawMessage `json:"payload"`
 	Timestamp time.Time       `json:"timestamp,omitempty"`
 }
 
+// WSErrorPayload represents an error message
 type WSErrorPayload struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
 }
 
+// ClientInfo represents WebSocket client information
 type ClientInfo struct {
 	UID       string
 	MCUCode   string

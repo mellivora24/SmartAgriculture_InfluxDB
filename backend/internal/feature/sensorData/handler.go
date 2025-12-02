@@ -122,19 +122,13 @@ func (h *Handler) QueryAggregation(c *gin.Context) {
 }
 
 func (h *Handler) CreateCommand(c *gin.Context) {
-	userID, exists := c.Get("user_id")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
-		return
-	}
-
 	var req CreateCommandRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	result, err := h.service.CreateCommand(c.Request.Context(), userID.(uuid.UUID), &req)
+	result, err := h.service.CreateCommand(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -181,14 +175,14 @@ func (h *Handler) GetPendingCommands(c *gin.Context) {
 }
 
 func (h *Handler) GetCommandHistory(c *gin.Context) {
-	var userID *uuid.UUID
-	if userIDStr := c.Query("user_id"); userIDStr != "" {
-		id, err := uuid.Parse(userIDStr)
+	var surveyPointID *uuid.UUID
+	if surveyPointIDStr := c.Query("survey_point_id"); surveyPointIDStr != "" {
+		id, err := uuid.Parse(surveyPointIDStr)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user_id"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid survey_point_id"})
 			return
 		}
-		userID = &id
+		surveyPointID = &id
 	}
 
 	var deviceName *string
@@ -198,7 +192,7 @@ func (h *Handler) GetCommandHistory(c *gin.Context) {
 
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
 
-	commands, err := h.service.GetCommandHistory(c.Request.Context(), userID, deviceName, limit)
+	commands, err := h.service.GetCommandHistory(c.Request.Context(), surveyPointID, deviceName, limit)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

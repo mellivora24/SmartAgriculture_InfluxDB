@@ -3,5 +3,6 @@
   <component name="DataSourcePerFileMappings">
     <file url="file://$PROJECT_DIR$/migrations/001_create_database_up.sql" value="6664b86b-56b8-4663-b49a-4c6283c341a3" />
     <file url="file://$PROJECT_DIR$/migrations/003_create_function_up.sql" value="6664b86b-56b8-4663-b49a-4c6283c341a3" />
+    <file url="file://$PROJECT_DIR$/migrations/004_create_function_down.sql" value="6664b86b-56b8-4663-b49a-4c6283c341a3" />
   </component>
 </project>

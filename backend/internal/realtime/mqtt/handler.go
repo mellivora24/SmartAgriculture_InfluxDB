@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"log"
-	"strings"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
@@ -74,14 +73,21 @@ func (h *Handler) onSensorData(client mqtt.Client, msg mqtt.Message) {
 		return
 	}
 
+	// Validate sensor data
+	if sensorPayload.SurveyPointID == uuid.Nil {
+		log.Printf("[MQTT Handler] Invalid survey_point_id in sensor data")
+		return
+	}
+
 	// Save sensor data to InfluxDB
 	ctx := context.Background()
 	sensorRecord := &sensorData.SensorData{
 		SurveyPointID: sensorPayload.SurveyPointID,
-		Temperature:   *sensorPayload.Temperature,
-		Humidity:      *sensorPayload.Humidity,
-		SoilMoisture:  *sensorPayload.SoilMoisture,
-		Light:         *sensorPayload.Light,
+		MCUCode:       sensorPayload.MCUCode,
+		Temperature:   getFloatValue(sensorPayload.Temperature),
+		Humidity:      getFloatValue(sensorPayload.Humidity),
+		SoilMoisture:  getFloatValue(sensorPayload.SoilMoisture),
+		Light:         getFloatValue(sensorPayload.Light),
 		Timestamp:     time.Now(),
 	}
 
@@ -92,15 +98,17 @@ func (h *Handler) onSensorData(client mqtt.Client, msg mqtt.Message) {
 
 	// Broadcast to WebSocket clients with the same MCU
 	wsMsg := shared.WSMessage{
-		Topic:   shared.WSTopicSensorData,
-		Payload: payloadBytes,
+		Topic:     shared.WSTopicSensorData,
+		Payload:   payloadBytes,
+		Timestamp: time.Now(),
 	}
 
 	if err := h.wsService.BroadcastToMCU(sensorPayload.MCUCode, wsMsg); err != nil {
 		log.Printf("[MQTT Handler] Error broadcasting sensor data: %v", err)
 	}
 
-	log.Printf("[MQTT Handler] Processed sensor data for MCU: %s", sensorPayload.MCUCode)
+	log.Printf("[MQTT Handler] Processed sensor data for MCU: %s, SurveyPoint: %s",
+		sensorPayload.MCUCode, sensorPayload.SurveyPointID)
 }
 
 // onControlResponse handles control response from MCU
@@ -124,9 +132,16 @@ func (h *Handler) onControlResponse(client mqtt.Client, msg mqtt.Message) {
 		return
 	}
 
-	// Get pending commands for this device
+	// Validate survey_point_id
+	if controlPayload.SurveyPointID == uuid.Nil {
+		log.Printf("[MQTT Handler] Invalid survey_point_id in control response")
+		return
+	}
+
 	ctx := context.Background()
-	commands, err := h.sensorService.GetCommandHistory(ctx, nil, &controlPayload.DeviceName, 10)
+
+	// Get pending commands for this survey point and device
+	commands, err := h.sensorService.GetCommandHistory(ctx, &controlPayload.SurveyPointID, &controlPayload.DeviceName, 10)
 	if err != nil {
 		log.Printf("[MQTT Handler] Error getting command history: %v", err)
 		return
@@ -142,31 +157,36 @@ func (h *Handler) onControlResponse(client mqtt.Client, msg mqtt.Message) {
 	}
 
 	if commandID != uuid.Nil {
-		// Update command status
+		// Map response status to database status
 		status := "success"
-		if controlPayload.Status == "failed" {
+		if controlPayload.Status == "failed" || controlPayload.Status == "error" {
 			status = "failed"
 		}
 
+		// Update command status
 		if _, err := h.sensorService.UpdateCommandStatus(ctx, commandID, status); err != nil {
 			log.Printf("[MQTT Handler] Error updating command status: %v", err)
 		} else {
 			log.Printf("[MQTT Handler] Updated command %s to status: %s", commandID, status)
 		}
+	} else {
+		log.Printf("[MQTT Handler] No pending command found for SurveyPoint: %s, Device: %s",
+			controlPayload.SurveyPointID, controlPayload.DeviceName)
 	}
 
 	// Broadcast response to WebSocket clients
 	wsMsg := shared.WSMessage{
-		Topic:   shared.WSTopicControlResponse,
-		Payload: payloadBytes,
+		Topic:     shared.WSTopicControlResponse,
+		Payload:   payloadBytes,
+		Timestamp: time.Now(),
 	}
 
 	if err := h.wsService.BroadcastToMCU(controlPayload.MCUCode, wsMsg); err != nil {
 		log.Printf("[MQTT Handler] Error broadcasting control response: %v", err)
 	}
 
-	log.Printf("[MQTT Handler] Processed control response for MCU: %s, Device: %s, Status: %s",
-		controlPayload.MCUCode, controlPayload.DeviceName, controlPayload.Status)
+	log.Printf("[MQTT Handler] Processed control response for MCU: %s, SurveyPoint: %s, Device: %s, Status: %s",
+		controlPayload.MCUCode, controlPayload.SurveyPointID, controlPayload.DeviceName, controlPayload.Status)
 }
 
 // onAlert handles alert notifications from MCU
@@ -192,8 +212,9 @@ func (h *Handler) onAlert(client mqtt.Client, msg mqtt.Message) {
 
 	// Broadcast alert to WebSocket clients
 	wsMsg := shared.WSMessage{
-		Topic:   shared.WSTopicAlert,
-		Payload: payloadBytes,
+		Topic:     shared.WSTopicAlert,
+		Payload:   payloadBytes,
+		Timestamp: time.Now(),
 	}
 
 	if err := h.wsService.BroadcastToMCU(alertPayload.MCUCode, wsMsg); err != nil {
@@ -204,19 +225,10 @@ func (h *Handler) onAlert(client mqtt.Client, msg mqtt.Message) {
 		alertPayload.MCUCode, alertPayload.Severity)
 }
 
-// Helper functions
-func extractFromTopic(topic string, position int) string {
-	parts := strings.Split(topic, "/")
-	if len(parts) > position {
-		return parts[position]
+// Helper function to safely get float value from pointer
+func getFloatValue(val *float64) float64 {
+	if val == nil {
+		return 0.0
 	}
-	return ""
-}
-
-func extractUIDFromTopic(topic string) string {
-	return extractFromTopic(topic, 1)
-}
-
-func extractMCUCodeFromTopic(topic string) string {
-	return extractFromTopic(topic, 3)
+	return *val
 }

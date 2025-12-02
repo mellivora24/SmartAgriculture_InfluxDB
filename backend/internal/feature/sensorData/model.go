@@ -20,13 +20,13 @@ type SensorData struct {
 }
 
 type DeviceCommand struct {
-	ID         uuid.UUID  `json:"id" gorm:"type:uuid;primary_key;default:gen_random_uuid()"`
-	UserID     *uuid.UUID `json:"user_id,omitempty" gorm:"type:uuid"`
-	DeviceName string     `json:"device_name" gorm:"type:varchar(255);not null"`
-	Command    string     `json:"command" gorm:"type:varchar(50);not null"`
-	Status     string     `json:"status" gorm:"type:varchar(50);default:'pending'"`
-	ExecutedAt *time.Time `json:"executed_at,omitempty" gorm:"type:timestamp"`
-	CreatedAt  time.Time  `json:"created_at" gorm:"autoCreateTime"`
+	ID            uuid.UUID  `json:"id" gorm:"type:uuid;primary_key;default:gen_random_uuid()"`
+	SurveyPointID *uuid.UUID `json:"survey_point_id,omitempty" gorm:"type:uuid"`
+	DeviceName    string     `json:"device_name" gorm:"type:varchar(255);not null"`
+	Command       string     `json:"command" gorm:"type:varchar(50);not null"`
+	Status        string     `json:"status" gorm:"type:varchar(50);default:'pending'"`
+	ExecutedAt    *time.Time `json:"executed_at,omitempty" gorm:"type:timestamp"`
+	CreatedAt     time.Time  `json:"created_at" gorm:"autoCreateTime"`
 }
 
 func (DeviceCommand) TableName() string {
@@ -34,19 +34,20 @@ func (DeviceCommand) TableName() string {
 }
 
 type CommandInfo struct {
-	CommandID  uuid.UUID  `json:"command_id"`
-	UserID     *uuid.UUID `json:"user_id"`
-	Username   *string    `json:"username"`
-	DeviceName string     `json:"device_name"`
-	Command    string     `json:"command"`
-	Status     string     `json:"status"`
-	ExecutedAt *time.Time `json:"executed_at,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
+	CommandID       uuid.UUID  `json:"command_id"`
+	SurveyPointID   *uuid.UUID `json:"survey_point_id"`
+	SurveyPointName *string    `json:"survey_point_name"`
+	DeviceName      string     `json:"device_name"`
+	Command         string     `json:"command"`
+	Status          string     `json:"status"`
+	ExecutedAt      *time.Time `json:"executed_at,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
 }
 
 type CreateCommandRequest struct {
-	DeviceName string `json:"device_name" validate:"required"`
-	Command    string `json:"command" validate:"required,oneof=on off"`
+	SurveyPointID uuid.UUID `json:"survey_point_id" validate:"required"`
+	DeviceName    string    `json:"device_name" validate:"required"`
+	Command       string    `json:"command" validate:"required,oneof=on off"`
 }
 
 type CommandOperationResult struct {

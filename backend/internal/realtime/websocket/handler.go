@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
 
@@ -133,9 +134,15 @@ func (h *Handler) handleControlRequest(clientID string, msg realtimeShared.WSMes
 		return
 	}
 
+	// IMPORTANT: Validate survey_point_id
+	if controlReq.SurveyPointID == uuid.Nil {
+		h.sendError(clientID, "missing_fields", "Survey point ID is required")
+		return
+	}
+
 	ctx := context.Background()
 
-	// Parse user ID
+	// Parse user_id for permission check (optional)
 	userID, err := shared.ParseUUID(userIDStr)
 	if err != nil {
 		log.Printf("[WS Handler] Error parsing user ID: %v", err)
@@ -143,20 +150,30 @@ func (h *Handler) handleControlRequest(clientID string, msg realtimeShared.WSMes
 		return
 	}
 
+	// TODO: Add permission check here
+	// Check if user has permission to control this survey point
+	// hasPermission := h.checkUserPermission(ctx, userID, controlReq.SurveyPointID)
+	// if !hasPermission {
+	//     h.sendError(clientID, "permission_denied", "You don't have permission to control this survey point")
+	//     return
+	// }
+
 	// Create command in database with pending status
 	cmdReq := &sensorData.CreateCommandRequest{
-		DeviceName: controlReq.DeviceName,
-		Command:    controlReq.Command,
+		SurveyPointID: controlReq.SurveyPointID,
+		DeviceName:    controlReq.DeviceName,
+		Command:       controlReq.Command,
 	}
 
-	result, err := h.sensorService.CreateCommand(ctx, userID, cmdReq)
+	result, err := h.sensorService.CreateCommand(ctx, cmdReq)
 	if err != nil {
 		log.Printf("[WS Handler] Error creating command: %v", err)
-		h.sendError(clientID, "database_error", "Failed to create command")
+		h.sendError(clientID, "database_error", fmt.Sprintf("Failed to create command: %v", err))
 		return
 	}
 
-	log.Printf("[WS Handler] Command created with ID: %s, Status: pending", result.CommandID)
+	log.Printf("[WS Handler] Command created with ID: %s, Status: pending, SurveyPointID: %s",
+		result.CommandID, controlReq.SurveyPointID)
 
 	// Publish command to MQTT
 	mqttTopic := fmt.Sprintf("user/%s/mcu/%s/control/request", userIDStr, controlReq.MCUCode)
@@ -170,9 +187,10 @@ func (h *Handler) handleControlRequest(clientID string, msg realtimeShared.WSMes
 	if err := h.mqttService.PublishJSON(mqttTopic, mqttMsg); err != nil {
 		log.Printf("[WS Handler] Error publishing to MQTT: %v", err)
 
+		// Update command status to failed
 		_, err := h.sensorService.UpdateCommandStatus(ctx, *result.CommandID, "failed")
 		if err != nil {
-			return
+			log.Printf("[WS Handler] Error updating command status to failed: %v", err)
 		}
 
 		h.sendError(clientID, "mqtt_error", "Failed to send command to device")
@@ -181,9 +199,10 @@ func (h *Handler) handleControlRequest(clientID string, msg realtimeShared.WSMes
 
 	// Send acknowledgment to client
 	ackPayload := map[string]interface{}{
-		"command_id": result.CommandID,
-		"status":     "pending",
-		"message":    "Command sent to device",
+		"command_id":      result.CommandID,
+		"survey_point_id": controlReq.SurveyPointID.String(),
+		"status":          "pending",
+		"message":         "Command sent to device",
 	}
 	ackBytes, _ := json.Marshal(ackPayload)
 
@@ -196,8 +215,8 @@ func (h *Handler) handleControlRequest(clientID string, msg realtimeShared.WSMes
 		log.Printf("[WS Handler] Error sending acknowledgment: %v", err)
 	}
 
-	log.Printf("[WS Handler] Control request processed: Device=%s, Command=%s",
-		controlReq.DeviceName, controlReq.Command)
+	log.Printf("[WS Handler] Control request processed: SurveyPointID=%s, Device=%s, Command=%s, UserID=%s",
+		controlReq.SurveyPointID, controlReq.DeviceName, controlReq.Command, userID)
 }
 
 // sendError sends error message to client

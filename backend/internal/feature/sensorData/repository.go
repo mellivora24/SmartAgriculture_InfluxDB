@@ -22,10 +22,10 @@ type Repository interface {
 	QueryLatestData(ctx context.Context, surveyPointID uuid.UUID, limit int) ([]map[string]interface{}, error)
 	QueryAggregation(ctx context.Context, req *AggregationRequest) ([]map[string]interface{}, error)
 
-	CreateCommand(ctx context.Context, userID uuid.UUID, deviceName, command string) (*CommandOperationResult, error)
+	CreateCommand(ctx context.Context, surveyPointID uuid.UUID, deviceName, command string) (*CommandOperationResult, error)
 	UpdateCommandStatus(ctx context.Context, commandID uuid.UUID, status string) (*CommandOperationResult, error)
 	GetPendingCommands(ctx context.Context, limit int) ([]*CommandInfo, error)
-	GetCommandHistory(ctx context.Context, userID *uuid.UUID, deviceName *string, limit int) ([]*CommandInfo, error)
+	GetCommandHistory(ctx context.Context, surveyPointID *uuid.UUID, deviceName *string, limit int) ([]*CommandInfo, error)
 	GetCommandByID(ctx context.Context, commandID uuid.UUID) (*DeviceCommand, error)
 }
 
@@ -157,10 +157,10 @@ func (r *repository) QueryAggregation(ctx context.Context, req *AggregationReque
 	return records, nil
 }
 
-func (r *repository) CreateCommand(ctx context.Context, userID uuid.UUID, deviceName, command string) (*CommandOperationResult, error) {
+func (r *repository) CreateCommand(ctx context.Context, surveyPointID uuid.UUID, deviceName, command string) (*CommandOperationResult, error) {
 	var result CommandOperationResult
 	err := r.db.WithContext(ctx).
-		Raw("SELECT * FROM create_device_command(?, ?, ?)", userID, deviceName, command).
+		Raw("SELECT * FROM create_device_command(?, ?, ?)", surveyPointID, deviceName, command).
 		Scan(&result).Error
 	if err != nil {
 		return nil, err
@@ -190,10 +190,10 @@ func (r *repository) GetPendingCommands(ctx context.Context, limit int) ([]*Comm
 	return commands, nil
 }
 
-func (r *repository) GetCommandHistory(ctx context.Context, userID *uuid.UUID, deviceName *string, limit int) ([]*CommandInfo, error) {
+func (r *repository) GetCommandHistory(ctx context.Context, surveyPointID *uuid.UUID, deviceName *string, limit int) ([]*CommandInfo, error) {
 	var commands []*CommandInfo
 	err := r.db.WithContext(ctx).
-		Raw("SELECT * FROM get_command_history(?, ?, ?)", userID, deviceName, limit).
+		Raw("SELECT * FROM get_command_history(?, ?, ?)", surveyPointID, deviceName, limit).
 		Scan(&commands).Error
 	if err != nil {
 		return nil, err

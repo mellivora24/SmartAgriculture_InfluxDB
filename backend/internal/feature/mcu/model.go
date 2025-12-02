@@ -20,12 +20,12 @@ func (MCU) TableName() string {
 }
 
 type MCUWithDetails struct {
-	MCUID            uuid.UUID `json:"mcu_id"`
-	MCUCode          string    `json:"mcu_code"`
-	Status           string    `json:"status"`
-	SurveyPointCount int64     `json:"survey_point_count"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	MCUID            uuid.UUID `json:"mcu_id" gorm:"column:mcu_id"`
+	MCUCode          string    `json:"mcu_code" gorm:"column:mcu_code"`
+	Status           string    `json:"status" gorm:"column:status"`
+	SurveyPointCount int64     `json:"survey_point_count" gorm:"column:survey_point_count"`
+	CreatedAt        time.Time `json:"created_at" gorm:"column:created_at"`
+	UpdatedAt        time.Time `json:"updated_at" gorm:"column:updated_at"`
 }
 
 type MCUInfo struct {

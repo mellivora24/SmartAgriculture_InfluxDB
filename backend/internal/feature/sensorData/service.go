@@ -16,10 +16,10 @@ type Service interface {
 	QueryLatestData(ctx context.Context, surveyPointID uuid.UUID, limit int) ([]map[string]interface{}, error)
 	QueryAggregation(ctx context.Context, req *AggregationRequest) ([]map[string]interface{}, error)
 
-	CreateCommand(ctx context.Context, userID uuid.UUID, req *CreateCommandRequest) (*CommandOperationResult, error)
+	CreateCommand(ctx context.Context, req *CreateCommandRequest) (*CommandOperationResult, error)
 	UpdateCommandStatus(ctx context.Context, commandID uuid.UUID, status string) (*CommandOperationResult, error)
 	GetPendingCommands(ctx context.Context, limit int) ([]*CommandInfo, error)
-	GetCommandHistory(ctx context.Context, userID *uuid.UUID, deviceName *string, limit int) ([]*CommandInfo, error)
+	GetCommandHistory(ctx context.Context, surveyPointID *uuid.UUID, deviceName *string, limit int) ([]*CommandInfo, error)
 	GetCommandByID(ctx context.Context, commandID uuid.UUID) (*DeviceCommand, error)
 }
 
@@ -86,8 +86,8 @@ func (s *service) QueryAggregation(ctx context.Context, req *AggregationRequest)
 	return records, nil
 }
 
-func (s *service) CreateCommand(ctx context.Context, userID uuid.UUID, req *CreateCommandRequest) (*CommandOperationResult, error) {
-	result, err := s.repo.CreateCommand(ctx, userID, req.DeviceName, req.Command)
+func (s *service) CreateCommand(ctx context.Context, req *CreateCommandRequest) (*CommandOperationResult, error) {
+	result, err := s.repo.CreateCommand(ctx, req.SurveyPointID, req.DeviceName, req.Command)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create command: %w", err)
 	}
@@ -125,12 +125,12 @@ func (s *service) GetPendingCommands(ctx context.Context, limit int) ([]*Command
 	return commands, nil
 }
 
-func (s *service) GetCommandHistory(ctx context.Context, userID *uuid.UUID, deviceName *string, limit int) ([]*CommandInfo, error) {
+func (s *service) GetCommandHistory(ctx context.Context, surveyPointID *uuid.UUID, deviceName *string, limit int) ([]*CommandInfo, error) {
 	if limit == 0 {
 		limit = 50
 	}
 
-	commands, err := s.repo.GetCommandHistory(ctx, userID, deviceName, limit)
+	commands, err := s.repo.GetCommandHistory(ctx, surveyPointID, deviceName, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get command history: %w", err)
 	}

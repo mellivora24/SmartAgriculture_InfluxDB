@@ -58,7 +58,7 @@ CREATE INDEX idx_survey_points_mcu_id ON tbl_survey_points(mcu_id);
 
 CREATE TABLE tbl_device_commands (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID REFERENCES tbl_users(id) ON DELETE SET NULL,
+    survey_point_id UUID REFERENCES tbl_survey_points(id) ON DELETE SET NULL,
     device_name VARCHAR(255) NOT NULL,
     command VARCHAR(50) NOT NULL, -- on, off
     status VARCHAR(50) DEFAULT 'pending', -- pending, sent, success, failed
