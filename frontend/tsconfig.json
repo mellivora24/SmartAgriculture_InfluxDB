@@ -26,5 +26,9 @@
 
     "ignoreDeprecations": "6.0"
   },
-  "include": ["src"]
+  "include": [
+    "src/**/*",
+    "src/env.d.ts",
+    "src/vite-env.d.ts"
+  ]
 }
