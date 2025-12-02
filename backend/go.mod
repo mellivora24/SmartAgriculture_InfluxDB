@@ -4,6 +4,7 @@ go 1.24.6
 
 require (
 	github.com/eclipse/paho.mqtt.golang v1.5.1
+	github.com/gin-contrib/cors v1.7.6
 	github.com/gin-gonic/gin v1.11.0
 	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/google/uuid v1.6.0
