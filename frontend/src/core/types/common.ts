@@ -24,6 +24,18 @@ export interface TimeRange {
     end_time: string;
 }
 
+// Thêm type cho Axios Error
+export interface ApiErrorResponse {
+    response?: {
+        data?: {
+            message?: string;
+            error?: string;
+        };
+        status?: number;
+    };
+    message?: string;
+}
+
 export type MCUStatus = 'online' | 'offline';
 export type SurveyPointStatus = 'connecting' | 'connected' | 'disconnected';
 export type CommandStatus = 'pending' | 'success' | 'failed';
