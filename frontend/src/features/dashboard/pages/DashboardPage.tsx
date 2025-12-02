@@ -155,7 +155,7 @@ const DashboardPage = () => {
     };
 
     loadInitialData();
-  }, [surveyPointId]);
+  }, [mcuCodeReady, sensorData.mcu_code, surveyPointId]);
 
   // WebSocket connection
   const { isConnected, sendMessage, connectionError } = useWebSocket({
