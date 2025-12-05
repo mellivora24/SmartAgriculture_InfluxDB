@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useWebSocket } from '@/core/hooks/useWebSocket';
 import { sensorDataApi } from '@/features/sensorData/api/sensorDataApi';
 import SensorCard from '../components/SensorCard';
-import type { SensorDataPoint, WebSocketMessage, SensorDataPayload, ControlRequestPayload, ControlResponsePayload } from '@/core/types';
+import type { SensorDataPoint, WebSocketMessage, SensorDataPayload, ControlRequestPayload, ControlResponsePayload, MQTTAlert } from '@/core/types';
 
 interface SensorReading {
   temperature: number | null;
@@ -38,6 +38,8 @@ const DashboardPage = () => {
     lastCommand: null,
     lastUpdate: null,
   });
+  const [plantAlert, setPlantAlert] = useState<MQTTAlert | null>(null);
+  const [alertHistory, setAlertHistory] = useState<MQTTAlert[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [commandStatus, setCommandStatus] = useState<string>('');
@@ -181,6 +183,28 @@ const DashboardPage = () => {
         } else {
           console.log('⏭️ Sensor data for different survey point, skipping');
         }
+      } else if (message.topic === 'alert') {
+        const payload = message.payload as MQTTAlert;
+        console.log('🚨 Alert received:', payload);
+        
+        // Check if this alert is for current MCU
+        if (payload.mcu_code === mcuCodeReady) {
+          setPlantAlert(payload);
+          setAlertHistory((prev) => [payload, ...prev.slice(0, 9)]); // Keep last 10 alerts
+          console.log('✅ Plant alert displayed');
+          
+          // Show browser notification if permission granted
+          if ('Notification' in window && Notification.permission === 'granted') {
+            new Notification(payload.title, {
+              body: payload.message,
+              icon: payload.severity === 'critical' || payload.severity === 'error' 
+                ? '🔴' 
+                : payload.severity === 'warning' 
+                ? '⚠️' 
+                : 'ℹ️',
+            });
+          }
+        }
       } else if (message.topic === 'control_response') {
         type ControlResponseWithPending = Omit<ControlResponsePayload, 'status'> & {
           command_id?: string;
@@ -230,6 +254,13 @@ const DashboardPage = () => {
     },
   });
 
+  // Request notification permission on mount
+  useEffect(() => {
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  }, []);
+
   const handlePumpControl = async (command: 'on' | 'off') => {
     if (!isConnected || !mcuCodeReady || !surveyPointId) {
       alert('Not connected or missing required data. Please wait...');
@@ -242,7 +273,7 @@ const DashboardPage = () => {
       const controlRequest: WebSocketMessage<ControlRequestPayload> = {
         topic: 'control_request',
         payload: {
-          survey_point_id: surveyPointId, // IMPORTANT: Include survey_point_id
+          survey_point_id: surveyPointId,
           mcu_code: mcuCodeReady,
           device_name: 'pump_001',
           command,
@@ -263,6 +294,40 @@ const DashboardPage = () => {
       console.error('❌ Failed to send command:', err);
       setCommandStatus('Failed to send command');
       setTimeout(() => setCommandStatus(''), 3000);
+    }
+  };
+
+  const dismissAlert = () => {
+    setPlantAlert(null);
+  };
+
+  const getAlertStyles = (severity: string) => {
+    switch (severity) {
+      case 'critical':
+        return 'bg-red-100 border-red-500 text-red-900';
+      case 'error':
+        return 'bg-red-50 border-red-400 text-red-800';
+      case 'warning':
+        return 'bg-yellow-50 border-yellow-400 text-yellow-800';
+      case 'info':
+        return 'bg-blue-50 border-blue-400 text-blue-800';
+      default:
+        return 'bg-gray-50 border-gray-400 text-gray-800';
+    }
+  };
+
+  const getAlertIcon = (severity: string) => {
+    switch (severity) {
+      case 'critical':
+        return '🔴';
+      case 'error':
+        return '❌';
+      case 'warning':
+        return '⚠️';
+      case 'info':
+        return 'ℹ️';
+      default:
+        return '📢';
     }
   };
 
@@ -353,6 +418,30 @@ const DashboardPage = () => {
 
       {/* Main Content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Plant Disease Alert - Prominent Display */}
+        {plantAlert && (
+          <div className={`mb-6 p-6 rounded-lg border-l-4 shadow-lg ${getAlertStyles(plantAlert.severity)} animate-pulse`}>
+            <div className="flex items-start justify-between">
+              <div className="flex items-start space-x-3 flex-1">
+                <span className="text-3xl">{getAlertIcon(plantAlert.severity)}</span>
+                <div className="flex-1">
+                  <h3 className="text-lg font-bold mb-1">{plantAlert.title}</h3>
+                  <p className="text-base mb-2">{plantAlert.message}</p>
+                  <p className="text-xs opacity-75">
+                    {new Date(plantAlert.time).toLocaleString()} • MCU: {plantAlert.mcu_code}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={dismissAlert}
+                className="ml-4 text-gray-500 hover:text-gray-700 text-2xl"
+              >
+                ×
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Command Status */}
         {commandStatus && (
           <div className={`mb-6 p-4 rounded-lg border ${
@@ -409,6 +498,32 @@ const DashboardPage = () => {
             bgColor="bg-yellow-50"
           />
         </div>
+
+        {/* Alert History */}
+        {alertHistory.length > 0 && (
+          <div className="mb-8 bg-white rounded-lg shadow p-6">
+            <h2 className="text-xl font-bold text-gray-900 mb-4">Alert History</h2>
+            <div className="space-y-3 max-h-64 overflow-y-auto">
+              {alertHistory.map((alert, index) => (
+                <div
+                  key={index}
+                  className={`p-3 rounded border-l-4 text-sm ${getAlertStyles(alert.severity)}`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-2">
+                      <span>{getAlertIcon(alert.severity)}</span>
+                      <span className="font-semibold">{alert.title}</span>
+                    </div>
+                    <span className="text-xs opacity-75">
+                      {new Date(alert.time).toLocaleTimeString()}
+                    </span>
+                  </div>
+                  <p className="mt-1 ml-6">{alert.message}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Water Pump Control */}
         <div className="mb-8 bg-white rounded-lg shadow-lg p-8">
