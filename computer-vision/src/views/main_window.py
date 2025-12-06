@@ -10,7 +10,6 @@ from PyQt5.QtWidgets import QMainWindow, QMessageBox
 
 from src.services.yolo_service import prediction
 from src.ultis.get_resource_path import ResourcePath
-from src.services.llm_service.gemini import GeminiChat
 from src.services.camera_service.camera import CameraThread
 
 class App(QMainWindow):
@@ -21,9 +20,9 @@ class App(QMainWindow):
 
         self.ui.result_infor.setText("")
         self.ui.predicted_res.setText("")
-        self.ui.predicting_btn.setText("Chat với Chatbot")
+        self.ui.predicting_btn.setText("Kiểm tra cây trồng")  # Đổi lại tên nút
         self.ui.moreInfor_btn.clicked.connect(self.more_info)
-        self.ui.predicting_btn.clicked.connect(self.suggestion)
+        self.ui.predicting_btn.clicked.connect(self.predict)  # Kết nối với chức năng predict
 
         # Lưu frame gốc từ camera
         self.current_frame = None
@@ -145,7 +144,7 @@ class App(QMainWindow):
     def predict(self):
         """ Dự đoán bệnh cây từ ảnh camera """
         if self.current_frame is None:
-            print("Không có frame để dự đoán")
+            QMessageBox.warning(self, "Cảnh báo", "Không có hình ảnh từ camera để kiểm tra.")
             return
 
         try:
@@ -153,7 +152,7 @@ class App(QMainWindow):
             cv_image = self.qimage_to_cv2(self.current_frame)
 
             if cv_image is None:
-                print("Lỗi chuyển đổi ảnh")
+                QMessageBox.warning(self, "Lỗi", "Không thể xử lý hình ảnh.")
                 return
 
             print(f"Kích thước ảnh đầu vào: {cv_image.shape}")
@@ -185,15 +184,19 @@ class App(QMainWindow):
             self.ui.predicted_res.setText(res_name)
             if res_name == "Cây khỏe mạnh":
                 self.ui.result_infor.setText("Bạn không cần phải lo lắng, cây của bạn đang khỏe mạnh!")
+                QMessageBox.information(self, "Kết quả", "Cây của bạn đang khỏe mạnh!")
             elif res_name == "Lỗi dự đoán":
                 self.ui.result_infor.setText("Có lỗi xảy ra trong quá trình dự đoán. Vui lòng thử lại.")
+                QMessageBox.warning(self, "Lỗi", "Có lỗi xảy ra trong quá trình dự đoán.")
             else:
                 self.ui.result_infor.setText(f"Mô tả tình trạng {res_name}: {res_description}")
+                QMessageBox.information(self, "Kết quả kiểm tra", f"Phát hiện: {res_name}\n\n{res_description}")
 
         except Exception as e:
             print(f"Lỗi trong quá trình dự đoán: {e}")
             self.ui.predicted_res.setText("Lỗi dự đoán")
             self.ui.result_infor.setText("Có lỗi xảy ra trong quá trình dự đoán. Vui lòng thử lại.")
+            QMessageBox.critical(self, "Lỗi", f"Có lỗi xảy ra: {str(e)}")
 
     def more_info(self):
         """ Mở Google tìm kiếm thông tin về bệnh cây đã dự đoán """
@@ -203,23 +206,6 @@ class App(QMainWindow):
             webbrowser.open(f"https://www.google.com/search?q={search_query}")
         else:
             QMessageBox.information(self, "Thông báo", "Chưa có kết quả dự đoán để tìm kiếm.")
-
-    def suggestion(self):
-        """ Mở chức năng chatbot và hiển thị kết quả qua popup """
-        predicted_text = self.ui.predicted_res.text().strip()
-
-        if predicted_text == "" or predicted_text == "Lỗi dự đoán":
-            QMessageBox.information(self, "Thông báo", "Bạn chưa có kết quả dự đoán hợp lệ để chat.")
-        else:
-            try:
-                response = GeminiChat(predicted_text)
-                if response:
-                    QMessageBox.information(self, "Kết quả từ Chatbot", response)
-                else:
-                    QMessageBox.information(self, "Thông báo", "Không có phản hồi từ Chatbot.")
-            except Exception as e:
-                print(f"Error when call API: {e}")
-                QMessageBox.warning(self, "Lỗi", f"Không thể kết nối với Chatbot: {str(e)}")
 
     def closeEvent(self, event):
         """ Xử lý khi đóng ứng dụng """
