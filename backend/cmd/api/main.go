@@ -7,6 +7,7 @@ import (
 	"backend/internal/feature/mcu"
 	"backend/internal/feature/sensorData"
 	"backend/internal/feature/surveyPoint"
+	"backend/internal/feature/threshold"
 	"backend/internal/feature/user"
 	mqttPkg "backend/internal/realtime/mqtt"
 	realtimeShared "backend/internal/realtime/shared"
@@ -41,6 +42,7 @@ type Application struct {
 	MCUHandler         *mcu.Handler
 	SurveyPointHandler *surveyPoint.Handler
 	SensorDataHandler  *sensorData.Handler
+	ThresholdHandler   *threshold.Handler
 
 	// Realtime handlers
 	MQTTHandler *mqttPkg.Handler
@@ -142,12 +144,16 @@ func (app *Application) initializeHandlers() error {
 	sensorDataService := sensorData.NewService(sensorDataRepo)
 	app.SensorDataHandler = sensorData.NewHandler(sensorDataService)
 
+	thresholdRepo := threshold.NewRepository(db)
+	thresholdService := threshold.NewService(thresholdRepo)
+	app.ThresholdHandler = threshold.NewHandler(thresholdService)
+
 	// Initialize realtime services
 	app.MQTTService = mqttPkg.NewService(app.MQTT)
 	app.WSService = wsPkg.NewService(app.WebSocket)
 
 	// Initialize realtime handlers
-	app.MQTTHandler = mqttPkg.NewHandler(app.MQTTService, app.WSService, sensorDataService)
+	app.MQTTHandler = mqttPkg.NewHandler(app.MQTTService, app.WSService, sensorDataService, thresholdService, surveyPointService)
 	app.WSHandler = wsPkg.NewHandler(app.WSService, app.MQTTService, sensorDataService)
 
 	log.Println("All handlers initialized successfully")
@@ -233,6 +239,7 @@ func (app *Application) setupRoutes() {
 			app.MCUHandler.RegisterRoutes(protected)
 			app.SurveyPointHandler.RegisterRoutes(protected)
 			app.SensorDataHandler.RegisterRoutes(protected)
+			app.ThresholdHandler.RegisterRoutes(protected)
 
 			// Database stats
 			protected.GET("/stats/db", func(c *gin.Context) {

@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -179,9 +178,8 @@ func (h *Handler) handleControlRequest(clientID string, msg realtimeShared.WSMes
 	mqttTopic := fmt.Sprintf("user/%s/mcu/%s/control/request", userIDStr, controlReq.MCUCode)
 
 	mqttMsg := realtimeShared.MQTTMessage{
-		Topic:     "control_request",
-		Payload:   controlReq,
-		Timestamp: time.Now(),
+		Topic:   "control_request",
+		Payload: controlReq,
 	}
 
 	if err := h.mqttService.PublishJSON(mqttTopic, mqttMsg); err != nil {

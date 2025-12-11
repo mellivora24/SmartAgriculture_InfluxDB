@@ -17,6 +17,7 @@ type Repository interface {
 	UpdateStatus(ctx context.Context, surveyPointID uuid.UUID, status string) (*SurveyPointOperationResult, error)
 	ListByMCU(ctx context.Context, mcuID uuid.UUID) ([]*SurveyPoint, error)
 	ListByStatus(ctx context.Context, status string, limit, offset int) ([]*SurveyPoint, error)
+	GetOwnerUserID(ctx context.Context, surveyPointID uuid.UUID) (uuid.UUID, error)
 }
 
 type repository struct {
@@ -99,4 +100,15 @@ func (r *repository) ListByStatus(ctx context.Context, status string, limit, off
 		return nil, err
 	}
 	return surveyPoints, nil
+}
+
+func (r *repository) GetOwnerUserID(ctx context.Context, surveyPointID uuid.UUID) (uuid.UUID, error) {
+	var userID uuid.UUID
+	err := r.db.WithContext(ctx).
+		Raw("SELECT get_survey_point_owner_user_id(?) AS user_id", surveyPointID).
+		Scan(&userID).Error
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return userID, nil
 }

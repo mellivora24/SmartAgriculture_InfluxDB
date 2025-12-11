@@ -2,9 +2,12 @@ package mqtt
 
 import (
 	"backend/internal/feature/sensorData"
+	"backend/internal/feature/surveyPoint"
+	"backend/internal/feature/threshold"
 	"backend/internal/realtime/shared"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"time"
 
@@ -13,20 +16,29 @@ import (
 )
 
 type Handler struct {
-	mqttService   shared.MQTTService
-	wsService     shared.WebSocketService
-	sensorService sensorData.Service
+	mqttService        shared.MQTTService
+	wsService          shared.WebSocketService
+	sensorService      sensorData.Service
+	thresholdService   threshold.Service
+	surveyPointService surveyPoint.Service
 }
 
-func NewHandler(mqttService shared.MQTTService, wsService shared.WebSocketService, sensorService sensorData.Service) *Handler {
+func NewHandler(
+	mqttService shared.MQTTService,
+	wsService shared.WebSocketService,
+	sensorService sensorData.Service,
+	thresholdService threshold.Service,
+	surveyPointService surveyPoint.Service,
+) *Handler {
 	return &Handler{
-		mqttService:   mqttService,
-		wsService:     wsService,
-		sensorService: sensorService,
+		mqttService:        mqttService,
+		wsService:          wsService,
+		sensorService:      sensorService,
+		thresholdService:   thresholdService,
+		surveyPointService: surveyPointService,
 	}
 }
 
-// Init subscribes to all required MQTT topics
 func (h *Handler) Init() error {
 	topics := map[string]mqtt.MessageHandler{
 		shared.MQTTTopicHealthRequest:   h.onHealthCheck,
@@ -45,14 +57,12 @@ func (h *Handler) Init() error {
 	return nil
 }
 
-// onHealthCheck handles health check requests
 func (h *Handler) onHealthCheck(client mqtt.Client, msg mqtt.Message) {
 	if err := h.mqttService.Publish(shared.MQTTTopicHealthResponse, "ok"); err != nil {
 		log.Printf("[MQTT Handler] Error publishing health response: %v", err)
 	}
 }
 
-// onSensorData handles incoming sensor data from MCU
 func (h *Handler) onSensorData(client mqtt.Client, msg mqtt.Message) {
 	var mqttMsg shared.MQTTMessage
 	if err := json.Unmarshal(msg.Payload(), &mqttMsg); err != nil {
@@ -60,7 +70,6 @@ func (h *Handler) onSensorData(client mqtt.Client, msg mqtt.Message) {
 		return
 	}
 
-	// Parse sensor data payload
 	payloadBytes, err := json.Marshal(mqttMsg.Payload)
 	if err != nil {
 		log.Printf("[MQTT Handler] Error marshaling payload: %v", err)
@@ -73,14 +82,14 @@ func (h *Handler) onSensorData(client mqtt.Client, msg mqtt.Message) {
 		return
 	}
 
-	// Validate sensor data
 	if sensorPayload.SurveyPointID == uuid.Nil {
 		log.Printf("[MQTT Handler] Invalid survey_point_id in sensor data")
 		return
 	}
 
-	// Save sensor data to InfluxDB
 	ctx := context.Background()
+
+	// Save sensor data to InfluxDB
 	sensorRecord := &sensorData.SensorData{
 		SurveyPointID: sensorPayload.SurveyPointID,
 		MCUCode:       sensorPayload.MCUCode,
@@ -93,10 +102,62 @@ func (h *Handler) onSensorData(client mqtt.Client, msg mqtt.Message) {
 
 	if err := h.sensorService.WriteSensorData(ctx, sensorRecord); err != nil {
 		log.Printf("[MQTT Handler] Error saving sensor data: %v", err)
-		// Continue to broadcast even if save fails
 	}
 
-	// Broadcast to WebSocket clients with the same MCU
+	// Check thresholds and send alerts
+	alerts, err := h.thresholdService.CheckSensorThresholds(
+		ctx,
+		sensorPayload.SurveyPointID,
+		sensorPayload.Temperature,
+		sensorPayload.Humidity,
+		sensorPayload.SoilMoisture,
+		sensorPayload.Light,
+	)
+
+	if err != nil {
+		log.Printf("[MQTT Handler] Error checking thresholds: %v", err)
+	}
+
+	// Send alerts via WebSocket and record them
+	for _, alert := range alerts {
+		if err := h.thresholdService.RecordAlert(ctx, sensorPayload.SurveyPointID, alert); err != nil {
+			log.Printf("[MQTT Handler] Error recording alert: %v", err)
+		}
+
+		alertPayload := shared.MQTTAlert{
+			MCUCode:  sensorPayload.MCUCode,
+			Title:    fmt.Sprintf("Cảnh báo: %s", alert.AlertType),
+			Message:  alert.Message,
+			Severity: alert.Severity,
+			Time:     time.Now(),
+		}
+
+		alertBytes, _ := json.Marshal(alertPayload)
+		wsMsg := shared.WSMessage{
+			Topic:     shared.WSTopicAlert,
+			Payload:   alertBytes,
+			Timestamp: time.Now(),
+		}
+
+		if err := h.wsService.BroadcastToMCU(sensorPayload.MCUCode, wsMsg); err != nil {
+			log.Printf("[MQTT Handler] Error broadcasting alert: %v", err)
+		}
+
+		log.Printf("[MQTT Handler] Alert sent: Type=%s, Severity=%s, MCU=%s",
+			alert.AlertType, alert.Severity, sensorPayload.MCUCode)
+	}
+
+	// Check if auto pump should be triggered
+	if sensorPayload.SoilMoisture != nil {
+		shouldPump, err := h.thresholdService.ShouldTriggerAutoPump(ctx, sensorPayload.SurveyPointID, *sensorPayload.SoilMoisture)
+		if err != nil {
+			log.Printf("[MQTT Handler] Error checking auto pump: %v", err)
+		} else if shouldPump {
+			h.triggerAutoPump(ctx, sensorPayload.SurveyPointID, sensorPayload.MCUCode, *sensorPayload.SoilMoisture)
+		}
+	}
+
+	// Broadcast sensor data to WebSocket clients
 	wsMsg := shared.WSMessage{
 		Topic:     shared.WSTopicSensorData,
 		Payload:   payloadBytes,
@@ -111,7 +172,101 @@ func (h *Handler) onSensorData(client mqtt.Client, msg mqtt.Message) {
 		sensorPayload.MCUCode, sensorPayload.SurveyPointID)
 }
 
-// onControlResponse handles control response from MCU
+func (h *Handler) triggerAutoPump(ctx context.Context, surveyPointID uuid.UUID, mcuCode string, soilMoisture float64) {
+	log.Printf("[MQTT Handler] Auto pump triggered for SurveyPoint: %s, Soil Moisture: %.2f%%", surveyPointID, soilMoisture)
+
+	// Create command to turn on pump
+	cmdReq := &sensorData.CreateCommandRequest{
+		SurveyPointID: surveyPointID,
+		DeviceName:    "pump",
+		Command:       "on",
+	}
+
+	result, err := h.sensorService.CreateCommand(ctx, cmdReq)
+	if err != nil {
+		log.Printf("[MQTT Handler] Error creating auto pump command: %v", err)
+		return
+	}
+
+	// Record auto pump history
+	pumpHistory, err := h.thresholdService.RecordAutoPump(ctx, surveyPointID, result.CommandID, soilMoisture)
+	if err != nil {
+		log.Printf("[MQTT Handler] Error recording auto pump history: %v", err)
+	}
+
+	userID, err := h.surveyPointService.GetOwnerUserID(ctx, surveyPointID)
+	if err != nil {
+		log.Printf("[MQTT Handler] Error getting owner user ID: %v", err)
+		userID = uuid.Nil
+	}
+
+	// Construct correct MQTT topic based on user ID
+	var mqttTopic string
+	if userID != uuid.Nil {
+		// Send to user-specific topic (matching ESP8266 subscription)
+		mqttTopic = fmt.Sprintf("user/%s/mcu/%s/control/request", userID, mcuCode)
+		log.Printf("[MQTT Handler] Using user-specific topic for auto pump: %s", mqttTopic)
+	} else {
+		// Fallback to system topic
+		mqttTopic = fmt.Sprintf("system/mcu/%s/control/request", mcuCode)
+		log.Printf("[MQTT Handler] WARNING: Using fallback system topic: %s", mqttTopic)
+	}
+
+	mqttMsg := shared.MQTTMessage{
+		Topic: "control_request",
+		Payload: shared.ControlRequestPayload{
+			SurveyPointID: surveyPointID,
+			MCUCode:       mcuCode,
+			DeviceName:    "pump",
+			Command:       "on",
+		},
+	}
+
+	if err := h.mqttService.PublishJSON(mqttTopic, mqttMsg); err != nil {
+		log.Printf("[MQTT Handler] Error publishing auto pump command: %v", err)
+
+		// Update command and pump history status to failed
+		if result.CommandID != nil {
+			h.sensorService.UpdateCommandStatus(ctx, *result.CommandID, "failed")
+		}
+		if pumpHistory != nil {
+			notes := fmt.Sprintf("Failed to publish MQTT command to topic: %s", mqttTopic)
+			h.thresholdService.UpdateAutoPumpStatus(ctx, pumpHistory.ID, "failed", &notes)
+		}
+		return
+	}
+
+	// Update auto pump history to running
+	if pumpHistory != nil {
+		notes := fmt.Sprintf("Auto pump started. Command ID: %s, Topic: %s, User ID: %s",
+			result.CommandID, mqttTopic, userID)
+		h.thresholdService.UpdateAutoPumpStatus(ctx, pumpHistory.ID, "running", &notes)
+	}
+
+	// Send notification via WebSocket
+	alertPayload := shared.MQTTAlert{
+		MCUCode:  mcuCode,
+		Title:    "Tự động bơm nước",
+		Message:  fmt.Sprintf("Độ ẩm đất thấp (%.2f%%). Hệ thống đã tự động bật máy bơm.", soilMoisture),
+		Severity: "info",
+		Time:     time.Now(),
+	}
+
+	alertBytes, _ := json.Marshal(alertPayload)
+	wsMsg := shared.WSMessage{
+		Topic:     shared.WSTopicAlert,
+		Payload:   alertBytes,
+		Timestamp: time.Now(),
+	}
+
+	if err := h.wsService.BroadcastToMCU(mcuCode, wsMsg); err != nil {
+		log.Printf("[MQTT Handler] Error broadcasting auto pump notification: %v", err)
+	}
+
+	log.Printf("[MQTT Handler] ✅ Auto pump command sent successfully: Topic=%s, SurveyPoint=%s, Command=%s, UserID=%s",
+		mqttTopic, surveyPointID, result.CommandID, userID)
+}
+
 func (h *Handler) onControlResponse(client mqtt.Client, msg mqtt.Message) {
 	var mqttMsg shared.MQTTMessage
 	if err := json.Unmarshal(msg.Payload(), &mqttMsg); err != nil {
@@ -119,7 +274,6 @@ func (h *Handler) onControlResponse(client mqtt.Client, msg mqtt.Message) {
 		return
 	}
 
-	// Parse control response payload
 	payloadBytes, err := json.Marshal(mqttMsg.Payload)
 	if err != nil {
 		log.Printf("[MQTT Handler] Error marshaling payload: %v", err)
@@ -132,7 +286,6 @@ func (h *Handler) onControlResponse(client mqtt.Client, msg mqtt.Message) {
 		return
 	}
 
-	// Validate survey_point_id
 	if controlPayload.SurveyPointID == uuid.Nil {
 		log.Printf("[MQTT Handler] Invalid survey_point_id in control response")
 		return
@@ -140,14 +293,12 @@ func (h *Handler) onControlResponse(client mqtt.Client, msg mqtt.Message) {
 
 	ctx := context.Background()
 
-	// Get pending commands for this survey point and device
 	commands, err := h.sensorService.GetCommandHistory(ctx, &controlPayload.SurveyPointID, &controlPayload.DeviceName, 10)
 	if err != nil {
 		log.Printf("[MQTT Handler] Error getting command history: %v", err)
 		return
 	}
 
-	// Find the most recent pending command
 	var commandID uuid.UUID
 	for _, cmd := range commands {
 		if cmd.Status == "pending" {
@@ -157,21 +308,26 @@ func (h *Handler) onControlResponse(client mqtt.Client, msg mqtt.Message) {
 	}
 
 	if commandID != uuid.Nil {
-		// Map response status to database status
 		status := "success"
 		if controlPayload.Status == "failed" || controlPayload.Status == "error" {
 			status = "failed"
 		}
 
-		// Update command status
 		if _, err := h.sensorService.UpdateCommandStatus(ctx, commandID, status); err != nil {
 			log.Printf("[MQTT Handler] Error updating command status: %v", err)
-		} else {
-			log.Printf("[MQTT Handler] Updated command %s to status: %s", commandID, status)
 		}
-	} else {
-		log.Printf("[MQTT Handler] No pending command found for SurveyPoint: %s, Device: %s",
-			controlPayload.SurveyPointID, controlPayload.DeviceName)
+
+		// Update auto pump history if this was an auto pump command
+		autoPumpHistory, err := h.thresholdService.GetAutoPumpHistory(ctx, controlPayload.SurveyPointID, 1)
+		if err == nil && len(autoPumpHistory) > 0 && autoPumpHistory[0].CommandID != nil && *autoPumpHistory[0].CommandID == commandID {
+			notes := fmt.Sprintf("Pump %s: %s", controlPayload.Status, controlPayload.Message)
+			finalStatus := "completed"
+			if status == "failed" {
+				finalStatus = "failed"
+			}
+			h.thresholdService.UpdateAutoPumpStatus(ctx, autoPumpHistory[0].ID, finalStatus, &notes)
+			log.Printf("[MQTT Handler] Auto pump history updated: %s", finalStatus)
+		}
 	}
 
 	// Broadcast response to WebSocket clients
@@ -185,11 +341,10 @@ func (h *Handler) onControlResponse(client mqtt.Client, msg mqtt.Message) {
 		log.Printf("[MQTT Handler] Error broadcasting control response: %v", err)
 	}
 
-	log.Printf("[MQTT Handler] Processed control response for MCU: %s, SurveyPoint: %s, Device: %s, Status: %s",
-		controlPayload.MCUCode, controlPayload.SurveyPointID, controlPayload.DeviceName, controlPayload.Status)
+	log.Printf("[MQTT Handler] Processed control response for MCU: %s, Device: %s, Status: %s",
+		controlPayload.MCUCode, controlPayload.DeviceName, controlPayload.Status)
 }
 
-// onAlert handles alert notifications from MCU
 func (h *Handler) onAlert(client mqtt.Client, msg mqtt.Message) {
 	var mqttMsg shared.MQTTMessage
 	if err := json.Unmarshal(msg.Payload(), &mqttMsg); err != nil {
@@ -197,7 +352,6 @@ func (h *Handler) onAlert(client mqtt.Client, msg mqtt.Message) {
 		return
 	}
 
-	// Parse alert payload
 	payloadBytes, err := json.Marshal(mqttMsg.Payload)
 	if err != nil {
 		log.Printf("[MQTT Handler] Error marshaling payload: %v", err)
@@ -210,7 +364,6 @@ func (h *Handler) onAlert(client mqtt.Client, msg mqtt.Message) {
 		return
 	}
 
-	// Broadcast alert to WebSocket clients
 	wsMsg := shared.WSMessage{
 		Topic:     shared.WSTopicAlert,
 		Payload:   payloadBytes,
@@ -225,7 +378,6 @@ func (h *Handler) onAlert(client mqtt.Client, msg mqtt.Message) {
 		alertPayload.MCUCode, alertPayload.Severity)
 }
 
-// Helper function to safely get float value from pointer
 func getFloatValue(val *float64) float64 {
 	if val == nil {
 		return 0.0

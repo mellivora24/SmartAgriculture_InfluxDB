@@ -34,7 +34,7 @@ func (s *service) Create(ctx context.Context, req *CreateMCURequest) (*MCU, erro
 	mcu := &MCU{
 		FarmID:  req.FarmID,
 		MCUCode: req.MCUCode,
-		Status:  "offline",
+		Status:  "online",
 	}
 
 	if err := s.repo.Create(ctx, mcu); err != nil {

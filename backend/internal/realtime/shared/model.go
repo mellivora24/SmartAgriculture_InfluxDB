@@ -28,9 +28,8 @@ const (
 
 // MQTTMessage represents an MQTT message
 type MQTTMessage struct {
-	Topic     string      `json:"topic"`
-	Payload   interface{} `json:"payload"`
-	Timestamp time.Time   `json:"timestamp"`
+	Topic   string      `json:"topic"`
+	Payload interface{} `json:"payload"`
 }
 
 // SensorDataPayload represents sensor data from MCU

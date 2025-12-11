@@ -15,6 +15,7 @@ import CreateFarmPage from '@/features/farm/pages/CreateFarmPage';
 import CreateMCUPage from '@/features/mcu/pages/CreateMCUPage';
 import CreateSurveyPointPage from '@/features/surveyPoint/pages/CreateSurveyPointPage';
 import CommandHistoryPage from '@/features/deviceCommand/pages/CommandHistoryPage';
+import ThresholdSettingsPage from "@/features/threshold/pages/ThresholdSettingsPage";
 
 export const router = createBrowserRouter([
   {
@@ -125,4 +126,12 @@ export const router = createBrowserRouter([
     path: "*",
     element: <Navigate to="/" replace />,
   },
+  {
+    path: '/dashboard/:surveyPointId/threshold-settings',
+    element: (
+      <ProtectedRoute>
+        <ThresholdSettingsPage />
+      </ProtectedRoute>
+    ),
+  }
 ]);

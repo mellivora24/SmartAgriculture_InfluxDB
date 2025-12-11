@@ -6,10 +6,10 @@
 #include <ArduinoJson.h>
 
 // ========== CONFIG ==========
-const char* WIFI_SSID = "Nissan GTR";
-const char* WIFI_PASSWORD = "12345678";
+const char* WIFI_SSID = "TTL";
+const char* WIFI_PASSWORD = "03022003";
 
-const char* MQTT_BROKER = "172.20.10.2";
+const char* MQTT_BROKER = "172.20.10.4";
 const int MQTT_PORT = 1883;
 const char* MQTT_USER = "admin";
 const char* MQTT_PASSWORD = "admin123456";
@@ -27,7 +27,8 @@ PubSubClient mqttClient(espClient);
 
 // ========== TOPICS ==========
 String topicSensorData;
-String topicControlRequest;
+String topicControlRequestUser;      // user/{USER_ID}/mcu/{MCU_CODE}/control/request
+String topicControlRequestSystem;    // system/mcu/{MCU_CODE}/control/request
 String topicControlResponse;
 String topicAlert;
 
@@ -50,11 +51,12 @@ void sendHealthCheck();
 // ========== SETUP ==========
 void setup() {
   Serial.begin(115200);
-  Serial.println("\n\n=== ESP8266 LoRa-MQTT Gateway ===");
+  Serial.println("\n\n=== ESP8266 LoRa-MQTT Gateway (Dual Topic) ===");
   
   // Build topics
   topicSensorData = "user/" + String(USER_ID) + "/mcu/" + String(MCU_CODE) + "/data";
-  topicControlRequest = "user/" + String(USER_ID) + "/mcu/" + String(MCU_CODE) + "/control/request";
+  topicControlRequestUser = "user/" + String(USER_ID) + "/mcu/" + String(MCU_CODE) + "/control/request";
+  topicControlRequestSystem = "system/mcu/" + String(MCU_CODE) + "/control/request";
   topicControlResponse = "user/" + String(USER_ID) + "/mcu/" + String(MCU_CODE) + "/control/response";
   topicAlert = "user/" + String(USER_ID) + "/mcu/" + String(MCU_CODE) + "/alert";
   
@@ -150,7 +152,6 @@ void receiveLoRaData() {
     return;
   }
   
-  // Check message type
   String msgType = nodeDoc["type"] | "sensor";
   
   if (msgType == "sensor") {
@@ -261,11 +262,17 @@ void reconnectMQTT() {
   if (connected) {
     Serial.println("✓ Connected!");
     
-    // Subscribe to control request topic
-    if (mqttClient.subscribe(topicControlRequest.c_str())) {
-      Serial.println("✓ Subscribed: " + topicControlRequest);
+    // Subscribe to BOTH user and system control topics
+    if (mqttClient.subscribe(topicControlRequestUser.c_str())) {
+      Serial.println("✓ Subscribed: " + topicControlRequestUser);
     } else {
-      Serial.println("✗ Subscribe failed");
+      Serial.println("✗ Subscribe failed (user topic)");
+    }
+    
+    if (mqttClient.subscribe(topicControlRequestSystem.c_str())) {
+      Serial.println("✓ Subscribed: " + topicControlRequestSystem);
+    } else {
+      Serial.println("✗ Subscribe failed (system topic)");
     }
     
     mqttClient.subscribe("/health/request");
@@ -293,8 +300,9 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     return;
   }
   
-  // Control request
-  if (String(topic) == topicControlRequest) {
+  // Control request from either user or system topic
+  if (String(topic) == topicControlRequestUser || String(topic) == topicControlRequestSystem) {
+    Serial.println("✓ Control request received from: " + String(topic));
     handleControlRequest(message);
   }
 }
@@ -328,11 +336,19 @@ void handleControlRequest(String message) {
   Serial.printf("Control: %s -> %s (%s)\n", 
                 deviceName.c_str(), command.c_str(), surveyPointId.c_str());
   
-  // Build command for Node
+  // Build command for Node - map "pump" to "relay" if needed
   StaticJsonDocument<256> cmdDoc;
   cmdDoc["type"] = "control";
   cmdDoc["survey_point_id"] = surveyPointId;
-  cmdDoc["device"] = deviceName;
+  
+  // Map device names: pump -> relay
+  if (deviceName == "pump") {
+    cmdDoc["device"] = "relay";
+    Serial.println("ℹ Mapped 'pump' -> 'relay'");
+  } else {
+    cmdDoc["device"] = deviceName;
+  }
+  
   cmdDoc["cmd"] = command;
   
   // Add extra fields if present
@@ -350,7 +366,7 @@ void handleControlRequest(String message) {
   
   Serial.println("✓ Sent to Node: " + cmdJson);
   
-  // Send immediate pending response to MQTT
+  // Send immediate pending response to MQTT (use original device name)
   publishControlResponse(surveyPointId, deviceName, command, "pending", "Command sent to node");
 }
 

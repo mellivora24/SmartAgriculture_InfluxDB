@@ -95,3 +95,113 @@ COMMENT ON TABLE tbl_farm_users IS 'Quan hệ người dùng và nông trại';
 COMMENT ON TABLE tbl_mcus IS 'MCU chính (ESP32 Gateway)';
 COMMENT ON TABLE tbl_survey_points IS 'Điểm khảo sát';
 COMMENT ON TABLE tbl_device_commands IS 'Lịch sử lệnh điều khiển';
+
+-- New tbl
+-- Bảng cấu hình ngưỡng cảnh báo cho từng survey point
+CREATE TABLE tbl_threshold_settings (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    survey_point_id UUID NOT NULL REFERENCES tbl_survey_points(id) ON DELETE CASCADE,
+    -- Ngưỡng nhiệt độ
+    temp_min FLOAT,
+    temp_max FLOAT,
+    temp_critical_min FLOAT,
+    temp_critical_max FLOAT,
+    -- Ngưỡng độ ẩm không khí
+    humidity_min FLOAT,
+    humidity_max FLOAT,
+    humidity_critical_min FLOAT,
+    humidity_critical_max FLOAT,
+    -- Ngưỡng độ ẩm đất
+    soil_moisture_min FLOAT,
+    soil_moisture_max FLOAT,
+    soil_moisture_critical_min FLOAT,
+    soil_moisture_critical_max FLOAT,
+    -- Ngưỡng ánh sáng
+    light_min FLOAT,
+    light_max FLOAT,
+    light_critical_min FLOAT,
+    light_critical_max FLOAT,
+    -- Cài đặt tự động bơm nước
+    auto_pump_enabled BOOLEAN DEFAULT false,
+    pump_trigger_soil_moisture FLOAT, -- Ngưỡng độ ẩm đất để bật máy bơm
+    pump_stop_soil_moisture FLOAT,    -- Ngưỡng độ ẩm đất để tắt máy bơm
+    pump_duration_seconds INT DEFAULT 30, -- Thời gian bơm tối đa (giây)
+    pump_cooldown_minutes INT DEFAULT 60, -- Thời gian nghỉ giữa các lần bơm (phút)
+    -- Cài đặt cảnh báo
+    alert_enabled BOOLEAN DEFAULT true,
+    alert_cooldown_minutes INT DEFAULT 10, -- Thời gian giữa các cảnh báo giống nhau
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(survey_point_id)
+);
+
+CREATE INDEX idx_threshold_settings_survey_point_id ON tbl_threshold_settings(survey_point_id);
+
+-- Bảng lịch sử cảnh báo
+CREATE TABLE tbl_alert_history (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    survey_point_id UUID NOT NULL REFERENCES tbl_survey_points(id) ON DELETE CASCADE,
+    alert_type VARCHAR(50) NOT NULL, -- temperature, humidity, soil_moisture, light
+    severity VARCHAR(20) NOT NULL, -- warning, critical
+    sensor_value FLOAT NOT NULL,
+    threshold_value FLOAT NOT NULL,
+    message TEXT NOT NULL,
+    acknowledged BOOLEAN DEFAULT false,
+    acknowledged_at TIMESTAMP WITH TIME ZONE,
+    acknowledged_by UUID REFERENCES tbl_users(id),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_alert_history_survey_point_id ON tbl_alert_history(survey_point_id);
+CREATE INDEX idx_alert_history_created_at ON tbl_alert_history(created_at);
+CREATE INDEX idx_alert_history_acknowledged ON tbl_alert_history(acknowledged);
+CREATE INDEX idx_alert_history_severity ON tbl_alert_history(severity);
+
+-- Bảng lịch sử tự động bơm
+CREATE TABLE tbl_auto_pump_history (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    survey_point_id UUID NOT NULL REFERENCES tbl_survey_points(id) ON DELETE CASCADE,
+    command_id UUID REFERENCES tbl_device_commands(id),
+    trigger_soil_moisture FLOAT NOT NULL,
+    target_soil_moisture FLOAT NOT NULL,
+    pump_duration_seconds INT NOT NULL,
+    status VARCHAR(50) DEFAULT 'triggered', -- triggered, running, completed, failed
+    started_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMP WITH TIME ZONE,
+    notes TEXT
+);
+
+CREATE INDEX idx_auto_pump_history_survey_point_id ON tbl_auto_pump_history(survey_point_id);
+CREATE INDEX idx_auto_pump_history_started_at ON tbl_auto_pump_history(started_at);
+CREATE INDEX idx_auto_pump_history_status ON tbl_auto_pump_history(status);
+
+-- Trigger cho updated_at
+CREATE TRIGGER update_threshold_settings_updated_at 
+    BEFORE UPDATE ON tbl_threshold_settings
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Comments
+COMMENT ON TABLE tbl_threshold_settings IS 'Cấu hình ngưỡng cảnh báo và tự động bơm';
+COMMENT ON TABLE tbl_alert_history IS 'Lịch sử các cảnh báo đã được gửi';
+COMMENT ON TABLE tbl_auto_pump_history IS 'Lịch sử tự động bơm nước';
+
+-- Insert default thresholds (example)
+INSERT INTO tbl_threshold_settings (
+    survey_point_id, 
+    temp_min, temp_max, temp_critical_min, temp_critical_max,
+    humidity_min, humidity_max, humidity_critical_min, humidity_critical_max,
+    soil_moisture_min, soil_moisture_max, soil_moisture_critical_min, soil_moisture_critical_max,
+    light_min, light_max, light_critical_min, light_critical_max,
+    auto_pump_enabled, pump_trigger_soil_moisture, pump_stop_soil_moisture
+) 
+SELECT 
+    id,
+    15.0, 35.0, 10.0, 40.0,  -- Temperature
+    30.0, 80.0, 20.0, 90.0,  -- Humidity
+    30.0, 80.0, 20.0, 90.0,  -- Soil Moisture
+    100.0, 50000.0, 50.0, 70000.0,  -- Light
+    false, 30.0, 60.0  -- Auto pump settings
+FROM tbl_survey_points
+WHERE NOT EXISTS (
+    SELECT 1 FROM tbl_threshold_settings WHERE survey_point_id = tbl_survey_points.id
+);

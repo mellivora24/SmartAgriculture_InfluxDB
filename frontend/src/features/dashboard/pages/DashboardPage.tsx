@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useWebSocket } from '@/core/hooks/useWebSocket';
@@ -45,7 +46,6 @@ const DashboardPage = () => {
   const [commandStatus, setCommandStatus] = useState<string>('');
   const [mcuCodeReady, setMcuCodeReady] = useState<string | undefined>(undefined);
 
-  // Load initial sensor data
   useEffect(() => {
     const loadInitialData = async () => {
       if (!surveyPointId) return;
@@ -53,9 +53,8 @@ const DashboardPage = () => {
       try {
         setIsLoading(true);
         setError(null);
-        console.log('🔍 Loading sensor data for survey point:', surveyPointId);
+        console.log('Loading sensor data for survey point:', surveyPointId);
 
-        // First, get survey point details to get MCU
         try {
           const surveyPointResponse = await fetch(
             `http://localhost:8080/api/v1/survey-points/${surveyPointId}`,
@@ -68,9 +67,8 @@ const DashboardPage = () => {
 
           if (surveyPointResponse.ok) {
             const surveyPointData = await surveyPointResponse.json();
-            console.log('📍 Survey Point data:', surveyPointData);
+            console.log('Survey Point data:', surveyPointData);
 
-            // Get MCU details
             if (surveyPointData.data?.mcu_id) {
               const mcuResponse = await fetch(
                 `http://localhost:8080/api/v1/mcus/${surveyPointData.data.mcu_id}`,
@@ -83,9 +81,8 @@ const DashboardPage = () => {
 
               if (mcuResponse.ok) {
                 const mcuData = await mcuResponse.json();
-                console.log('🔌 MCU data:', mcuData);
+                console.log('MCU data:', mcuData);
 
-                // Set MCU code immediately
                 if (mcuData.data?.mcu_code) {
                   setSensorData((prev) => ({
                     ...prev,
@@ -93,7 +90,7 @@ const DashboardPage = () => {
                     survey_point_name: surveyPointData.data.name,
                   }));
                   setMcuCodeReady(mcuData.data.mcu_code);
-                  console.log('✅ MCU Code set:', mcuData.data.mcu_code);
+                  console.log('MCU Code set:', mcuData.data.mcu_code);
                 } else {
                   setSensorData((prev) => ({
                     ...prev,
@@ -114,12 +111,11 @@ const DashboardPage = () => {
             }
           }
         } catch (err) {
-          console.error('⚠️ Failed to load survey point/MCU:', err);
+          console.error('Failed to load survey point/MCU:', err);
         }
 
-        // Then load sensor data
         const response = await sensorDataApi.getLatestData(surveyPointId, 1);
-        console.log('📊 Sensor data response:', response);
+        console.log('Sensor data response:', response);
 
         if (response.data && response.data.length > 0) {
           const mcuCodeFromData = response.data[0].mcu_code;
@@ -134,7 +130,7 @@ const DashboardPage = () => {
             timestamp: response.data[0]._time,
           };
 
-          console.log('🔑 MCU Code from API:', mcuCodeFromData);
+          console.log('MCU Code from API:', mcuCodeFromData);
 
           response.data.forEach((item: SensorDataPoint) => {
             if (item._field === 'temperature') latestData.temperature = item._value;
@@ -144,13 +140,13 @@ const DashboardPage = () => {
           });
 
           setSensorData((prev) => ({ ...prev, ...latestData }));
-          console.log('✅ Sensor data loaded successfully');
+          console.log('Sensor data loaded successfully');
         } else {
-          console.warn('⚠️ No sensor data found');
+          console.warn('No sensor data found');
         }
       } catch (err) {
         setError('Failed to load sensor data');
-        console.error('❌ Error loading sensor data:', err);
+        console.error('Error loading sensor data:', err);
       } finally {
         setIsLoading(false);
       }
@@ -159,17 +155,15 @@ const DashboardPage = () => {
     loadInitialData();
   }, [mcuCodeReady, sensorData.mcu_code, surveyPointId]);
 
-  // WebSocket connection
   const { isConnected, sendMessage, connectionError } = useWebSocket({
     mcuCode: mcuCodeReady || undefined,
     onMessage: (message: WebSocketMessage<unknown>) => {
-      console.log('📩 WebSocket message received:', message);
+      console.log('WebSocket message received:', message);
 
       if (message.topic === 'sensor_data') {
         const payload = message.payload as SensorDataPayload;
-        console.log('🌡️ Sensor data payload:', payload);
-        
-        // Check if this sensor data is for current survey point
+        console.log('Sensor data payload:', payload);
+
         if (payload.survey_point_id === surveyPointId) {
           setSensorData((prev) => ({
             ...prev,
@@ -179,29 +173,22 @@ const DashboardPage = () => {
             light: payload.light ?? prev.light,
             timestamp: message.timestamp || new Date().toISOString(),
           }));
-          console.log('✅ Sensor data updated');
+          console.log('Sensor data updated');
         } else {
-          console.log('⏭️ Sensor data for different survey point, skipping');
+          console.log('Sensor data for different survey point, skipping');
         }
       } else if (message.topic === 'alert') {
         const payload = message.payload as MQTTAlert;
-        console.log('🚨 Alert received:', payload);
-        
-        // Check if this alert is for current MCU
+        console.log('Alert received:', payload);
+
         if (payload.mcu_code === mcuCodeReady) {
           setPlantAlert(payload);
-          setAlertHistory((prev) => [payload, ...prev.slice(0, 9)]); // Keep last 10 alerts
-          console.log('✅ Plant alert displayed');
-          
-          // Show browser notification if permission granted
+          setAlertHistory((prev) => [payload, ...prev.slice(0, 9)]);
+          console.log('Plant alert displayed');
+
           if ('Notification' in window && Notification.permission === 'granted') {
             new Notification(payload.title, {
               body: payload.message,
-              icon: payload.severity === 'critical' || payload.severity === 'error' 
-                ? '🔴' 
-                : payload.severity === 'warning' 
-                ? '⚠️' 
-                : 'ℹ️',
             });
           }
         }
@@ -209,52 +196,65 @@ const DashboardPage = () => {
         type ControlResponseWithPending = Omit<ControlResponsePayload, 'status'> & {
           command_id?: string;
           survey_point_id?: string;
+          mcu_code?: string;
           status: 'success' | 'failed' | 'pending';
         };
         const payload = message.payload as ControlResponseWithPending;
-        console.log('🎛️ Control response payload:', payload);
+        console.log('Control response payload:', payload);
 
-        // First response from backend (pending) - includes command_id and survey_point_id
-        if (payload.status === 'pending' && payload.command_id) {
-          // Verify this is for our survey point
-          if (payload.survey_point_id === surveyPointId) {
-            setCommandStatus(`Command sent to device (ID: ${payload.command_id}). Waiting for ESP8266...`);
-            setPumpStatus((prev) => ({
-              ...prev,
-              status: 'pending',
-              lastCommand: payload.command || prev.lastCommand,
-            }));
-            console.log('⏳ Command pending, waiting for ESP8266 response');
-          }
+        const isForCurrentDevice =
+          payload.survey_point_id === surveyPointId ||
+          payload.mcu_code === mcuCodeReady;
+
+        if (!isForCurrentDevice) {
+          console.log('Control response for different device, skipping');
+          return;
         }
-        // Final response from ESP8266 (actual execution) - includes mcu_code and survey_point_id
-        else if (payload.survey_point_id === surveyPointId && payload.device_name === 'pump_001') {
-          const isOn = payload.command === 'on' || payload.command === 'turn_on';
+
+        if (payload.status === 'pending' && payload.command_id) {
+          setCommandStatus(`Command sent to device (ID: ${payload.command_id}). Waiting for ESP8266...`);
+          setPumpStatus((prev) => ({
+            ...prev,
+            status: 'pending',
+            lastCommand: payload.command || prev.lastCommand,
+          }));
+          console.log('Command pending, waiting for ESP8266 response');
+        } else {
+          if ((window as any).__pumpControlTimeout) {
+            clearTimeout((window as any).__pumpControlTimeout);
+            (window as any).__pumpControlTimeout = null;
+          }
+
+          console.log('Final response from ESP8266:', payload);
+
+          const command = payload.command?.toLowerCase() || '';
+          const isOn = command.includes('on') || command === 'turn_on';
+
+          const isSuccess = !payload.status || payload.status === 'success';
+
           setPumpStatus({
-            status: payload.status === 'success' ? (isOn ? 'on' : 'off') : 'off',
+            status: isSuccess ? (isOn ? 'on' : 'off') : 'off',
             lastCommand: payload.command,
             lastUpdate: message.timestamp || new Date().toISOString(),
           });
-          
-          if (payload.status === 'success') {
-            setCommandStatus(`✓ Pump ${isOn ? 'turned ON' : 'turned OFF'} successfully!`);
+
+          if (isSuccess) {
+            setCommandStatus(`Pump ${isOn ? 'turned ON' : 'turned OFF'} successfully!`);
           } else {
-            setCommandStatus(`✗ Failed to ${isOn ? 'turn ON' : 'turn OFF'} pump: ${payload.message || 'Unknown error'}`);
+            setCommandStatus(`Failed to ${isOn ? 'turn ON' : 'turn OFF'} pump: ${payload.message || 'Unknown error'}`);
           }
-          
+
           setTimeout(() => setCommandStatus(''), 3000);
-          console.log(`✅ Pump command executed: ${payload.status}`);
         }
       } else if (message.topic === 'error') {
         const errorPayload = message.payload as { code: string; message: string };
-        console.error('❌ WebSocket error:', errorPayload);
+        console.error('WebSocket error:', errorPayload);
         setCommandStatus(`Error: ${errorPayload.message}`);
         setTimeout(() => setCommandStatus(''), 5000);
       }
     },
   });
 
-  // Request notification permission on mount
   useEffect(() => {
     if ('Notification' in window && Notification.permission === 'default') {
       Notification.requestPermission();
@@ -268,14 +268,14 @@ const DashboardPage = () => {
     }
 
     try {
-      console.log('🎛️ Sending pump control command:', { surveyPointId, mcuCodeReady, command });
-      
+      console.log('Sending pump control command:', { surveyPointId, mcuCodeReady, command });
+
       const controlRequest: WebSocketMessage<ControlRequestPayload> = {
         topic: 'control_request',
         payload: {
           survey_point_id: surveyPointId,
           mcu_code: mcuCodeReady,
-          device_name: 'pump_001',
+          device_name: 'pump',
           command,
         },
       };
@@ -288,10 +288,23 @@ const DashboardPage = () => {
         status: 'pending',
         lastCommand: command,
       }));
-      
-      console.log('📤 Control request sent via WebSocket');
+
+      console.log('Control request sent via WebSocket');
+
+      const timeoutId = setTimeout(() => {
+        if (pumpStatus.status === 'pending') {
+          setCommandStatus('Timeout: No response from device. Please try again.');
+          setPumpStatus((prev) => ({
+            ...prev,
+            status: prev.status === 'pending' ? 'unknown' : prev.status,
+          }));
+          setTimeout(() => setCommandStatus(''), 5000);
+        }
+      }, 30000);
+
+      (window as any).__pumpControlTimeout = timeoutId;
     } catch (err) {
-      console.error('❌ Failed to send command:', err);
+      console.error('Failed to send command:', err);
       setCommandStatus('Failed to send command');
       setTimeout(() => setCommandStatus(''), 3000);
     }
@@ -313,21 +326,6 @@ const DashboardPage = () => {
         return 'bg-blue-50 border-blue-400 text-blue-800';
       default:
         return 'bg-gray-50 border-gray-400 text-gray-800';
-    }
-  };
-
-  const getAlertIcon = (severity: string) => {
-    switch (severity) {
-      case 'critical':
-        return '🔴';
-      case 'error':
-        return '❌';
-      case 'warning':
-        return '⚠️';
-      case 'info':
-        return 'ℹ️';
-      default:
-        return '📢';
     }
   };
 
@@ -371,16 +369,8 @@ const DashboardPage = () => {
     }
   };
 
-  const getPumpIcon = () => {
-    if (pumpStatus.status === 'pending') return '⏳';
-    if (pumpStatus.status === 'on') return '✓';
-    if (pumpStatus.status === 'off') return '○';
-    return '?';
-  };
-
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
       <div className="bg-white shadow">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
           <button
@@ -398,7 +388,7 @@ const DashboardPage = () => {
                 {sensorData.survey_point_name || 'Dashboard'}
               </h1>
               <p className="mt-1 text-sm text-gray-500">
-                Real-time sensor monitoring • MCU: {sensorData.mcu_code || 'N/A'} • Survey Point: {surveyPointId?.slice(0, 8)}...
+                Real-time sensor monitoring - MCU: {sensorData.mcu_code || 'N/A'} - Survey Point: {surveyPointId?.slice(0, 8)}...
               </p>
             </div>
             <div className="flex items-center space-x-3">
@@ -416,19 +406,16 @@ const DashboardPage = () => {
         </div>
       </div>
 
-      {/* Main Content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Plant Disease Alert - Prominent Display */}
         {plantAlert && (
           <div className={`mb-6 p-6 rounded-lg border-l-4 shadow-lg ${getAlertStyles(plantAlert.severity)} animate-pulse`}>
             <div className="flex items-start justify-between">
               <div className="flex items-start space-x-3 flex-1">
-                <span className="text-3xl">{getAlertIcon(plantAlert.severity)}</span>
                 <div className="flex-1">
                   <h3 className="text-lg font-bold mb-1">{plantAlert.title}</h3>
                   <p className="text-base mb-2">{plantAlert.message}</p>
                   <p className="text-xs opacity-75">
-                    {new Date(plantAlert.time).toLocaleString()} • MCU: {plantAlert.mcu_code}
+                    {new Date(plantAlert.time).toLocaleString()} - MCU: {plantAlert.mcu_code}
                   </p>
                 </div>
               </div>
@@ -442,34 +429,30 @@ const DashboardPage = () => {
           </div>
         )}
 
-        {/* Command Status */}
         {commandStatus && (
-          <div className={`mb-6 p-4 rounded-lg border ${
-            commandStatus.includes('✓') 
-              ? 'bg-green-50 border-green-200' 
-              : commandStatus.includes('✗')
-              ? 'bg-red-50 border-red-200'
-              : 'bg-blue-50 border-blue-200'
-          }`}>
-            <p className={`text-sm font-medium ${
-              commandStatus.includes('✓')
-                ? 'text-green-800'
-                : commandStatus.includes('✗')
-                ? 'text-red-800'
-                : 'text-blue-800'
+          <div className={`mb-6 p-4 rounded-lg border ${commandStatus.includes('successfully')
+              ? 'bg-green-50 border-green-200'
+              : commandStatus.includes('Failed') || commandStatus.includes('Timeout')
+                ? 'bg-red-50 border-red-200'
+                : 'bg-blue-50 border-blue-200'
             }`}>
+            <p className={`text-sm font-medium ${commandStatus.includes('successfully')
+                ? 'text-green-800'
+                : commandStatus.includes('Failed') || commandStatus.includes('Timeout')
+                  ? 'text-red-800'
+                  : 'text-blue-800'
+              }`}>
               {commandStatus}
             </p>
           </div>
         )}
 
-        {/* Sensor Cards Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           <SensorCard
             title="Temperature"
             value={sensorData.temperature}
             unit="°C"
-            icon="🌡️"
+            icon=""
             color="text-red-600"
             bgColor="bg-red-50"
           />
@@ -477,7 +460,7 @@ const DashboardPage = () => {
             title="Humidity"
             value={sensorData.humidity}
             unit="%"
-            icon="💧"
+            icon=""
             color="text-blue-600"
             bgColor="bg-blue-50"
           />
@@ -485,7 +468,7 @@ const DashboardPage = () => {
             title="Soil Moisture"
             value={sensorData.soil_moisture}
             unit="%"
-            icon="🌱"
+            icon=""
             color="text-green-600"
             bgColor="bg-green-50"
           />
@@ -493,13 +476,12 @@ const DashboardPage = () => {
             title="Light"
             value={sensorData.light}
             unit="lux"
-            icon="☀️"
+            icon=""
             color="text-yellow-600"
             bgColor="bg-yellow-50"
           />
         </div>
 
-        {/* Alert History */}
         {alertHistory.length > 0 && (
           <div className="mb-8 bg-white rounded-lg shadow p-6">
             <h2 className="text-xl font-bold text-gray-900 mb-4">Alert History</h2>
@@ -511,7 +493,6 @@ const DashboardPage = () => {
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center space-x-2">
-                      <span>{getAlertIcon(alert.severity)}</span>
                       <span className="font-semibold">{alert.title}</span>
                     </div>
                     <span className="text-xs opacity-75">
@@ -525,20 +506,16 @@ const DashboardPage = () => {
           </div>
         )}
 
-        {/* Water Pump Control */}
         <div className="mb-8 bg-white rounded-lg shadow-lg p-8">
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-2xl font-bold text-gray-900">Water Pump Control</h2>
             <div className={`px-4 py-2 rounded-full text-sm font-semibold ${getPumpStatusColor()}`}>
-              {getPumpIcon()} {pumpStatus.status.toUpperCase()}
+              {pumpStatus.status.toUpperCase()}
             </div>
           </div>
 
           <div className="flex items-center justify-center mb-6">
             <div className="text-center">
-              <div className="text-6xl mb-4">
-                {pumpStatus.status === 'on' ? '💧' : pumpStatus.status === 'pending' ? '⏳' : '🚰'}
-              </div>
               <p className="text-gray-600">
                 {pumpStatus.status === 'on' && 'Pump is running'}
                 {pumpStatus.status === 'off' && 'Pump is stopped'}
@@ -559,38 +536,31 @@ const DashboardPage = () => {
               disabled={!isConnected || pumpStatus.status === 'pending' || !surveyPointId}
               className="px-6 py-4 bg-green-500 hover:bg-green-600 text-white rounded-lg font-semibold text-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl"
             >
-              <div className="flex items-center justify-center">
-                <span className="mr-2">🔋</span>
-                Turn ON
-              </div>
+              Turn ON
             </button>
             <button
               onClick={() => handlePumpControl('off')}
               disabled={!isConnected || pumpStatus.status === 'pending' || !surveyPointId}
               className="px-6 py-4 bg-red-500 hover:bg-red-600 text-white rounded-lg font-semibold text-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl"
             >
-              <div className="flex items-center justify-center">
-                <span className="mr-2">⏸️</span>
-                Turn OFF
-              </div>
+              Turn OFF
             </button>
           </div>
 
           {!isConnected && (
             <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
               <p className="text-sm text-yellow-800 text-center">
-                ⚠️ {connectionError || 'WebSocket disconnected. Reconnecting...'}
+                {connectionError || 'WebSocket disconnected. Reconnecting...'}
               </p>
               <div className="mt-2 text-xs text-gray-600 text-center space-y-1">
                 <p>MCU Code: {sensorData.mcu_code || 'Not loaded yet'}</p>
                 <p>Survey Point ID: {surveyPointId || 'Missing'}</p>
-                <p>Token: {localStorage.getItem('token') ? '✓ Present' : '✗ Missing'}</p>
+                <p>Token: {localStorage.getItem('token') ? 'Present' : 'Missing'}</p>
               </div>
             </div>
           )}
         </div>
 
-        {/* Last Sensor Update */}
         {sensorData.timestamp && (
           <div className="bg-white rounded-lg shadow p-4 text-center mb-8">
             <p className="text-sm text-gray-500">
@@ -599,8 +569,7 @@ const DashboardPage = () => {
           </div>
         )}
 
-        {/* Action Buttons */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <button
             onClick={() => navigate(`/dashboard/${surveyPointId}/sensor-history`)}
             className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow text-left"
@@ -636,6 +605,32 @@ const DashboardPage = () => {
                   strokeLinejoin="round"
                   strokeWidth={2}
                   d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"
+                />
+              </svg>
+            </div>
+          </button>
+
+          <button
+            onClick={() => navigate(`/dashboard/${surveyPointId}/threshold-settings`)}
+            className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow text-left border-2 border-orange-200"
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Threshold Settings</h3>
+                <p className="text-sm text-gray-600">Configure alerts & auto pump</p>
+              </div>
+              <svg className="h-6 w-6 text-orange-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+                />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
                 />
               </svg>
             </div>

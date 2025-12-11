@@ -9,7 +9,7 @@
 #define DHTPIN 6
 #define DHTTYPE DHT11
 #define SOIL_PIN A0
-#define RELAY_PIN 3
+#define RELAY_PIN 3  // This controls the pump relay
 
 const char* SURVEY_POINT_ID = "550e8400-e29b-41d4-a716-446655440000";
 
@@ -53,6 +53,7 @@ void setup() {
   
   Serial.println("OK!");
   Serial.println("Survey Point: " + String(SURVEY_POINT_ID));
+  Serial.println("Relay/Pump: Pin " + String(RELAY_PIN));
 }
 
 // ========== LOOP ==========
@@ -95,16 +96,17 @@ void handleControlCommand(JsonDocument& doc) {
   String status = "success";
   String message = "";
   
-  if (device == "relay") {
+  // Handle both "relay" and "pump" as the same device
+  if (device == "relay" || device == "pump") {
     if (cmd == "on") {
       digitalWrite(RELAY_PIN, HIGH);
-      Serial.println("✓ Relay ON");
-      message = "Relay turned on";
+      Serial.println("✓ Pump/Relay ON");
+      message = device + " turned on";
     } 
     else if (cmd == "off") {
       digitalWrite(RELAY_PIN, LOW);
-      Serial.println("✓ Relay OFF");
-      message = "Relay turned off";
+      Serial.println("✓ Pump/Relay OFF");
+      message = device + " turned off";
     } 
     else {
       status = "failed";
@@ -156,7 +158,7 @@ void sendSensorData() {
   doc["hum"] = isnan(hum) ? 0 : hum;
   doc["lux"] = lux;
   doc["soil"] = soil;
-  doc["relay"] = digitalRead(RELAY_PIN);
+  doc["relay"] = digitalRead(RELAY_PIN);  // Current pump/relay state
   
   String json;
   serializeJson(doc, json);

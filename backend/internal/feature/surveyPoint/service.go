@@ -19,6 +19,7 @@ type Service interface {
 	UpdateStatus(ctx context.Context, surveyPointID uuid.UUID, status string) (*SurveyPointOperationResult, error)
 	ListByMCU(ctx context.Context, mcuID uuid.UUID) ([]*SurveyPoint, error)
 	ListByStatus(ctx context.Context, status string, limit, offset int) ([]*SurveyPoint, error)
+	GetOwnerUserID(ctx context.Context, surveyPointID uuid.UUID) (uuid.UUID, error)
 }
 
 type service struct {
@@ -144,4 +145,13 @@ func (s *service) ListByStatus(ctx context.Context, status string, limit, offset
 	}
 
 	return surveyPoints, nil
+}
+
+func (s *service) GetOwnerUserID(ctx context.Context, surveyPointID uuid.UUID) (uuid.UUID, error) {
+	userID, err := s.repo.GetOwnerUserID(ctx, surveyPointID)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("failed to get owner user id: %w", err)
+	}
+
+	return userID, nil
 }
