@@ -6,16 +6,16 @@
 #include <ArduinoJson.h>
 
 // ========== CONFIG ==========
-const char* WIFI_SSID = "KidsLAB";
-const char* WIFI_PASSWORD = "hoianhHung";
+const char* WIFI_SSID = "WiFi";
+const char* WIFI_PASSWORD = "12345678";
 
-const char* MQTT_BROKER = "192.168.1.103";
+const char* MQTT_BROKER = "172.20.10.2";
 const int MQTT_PORT = 1883;
 const char* MQTT_USER = "admin";
 const char* MQTT_PASSWORD = "admin123456";
 
-const char* USER_ID = "43af70bf-21e5-4cd5-8af7-0b8da260b430";
-const char* MCU_CODE = "6789";
+const char* USER_ID = "b57ccce6-97e1-4a0d-8c46-dc1e8fde9f8a";
+const char* MCU_CODE = "123456";
 
 // ========== LORA CONFIG ==========
 #define LORA_NSS D8

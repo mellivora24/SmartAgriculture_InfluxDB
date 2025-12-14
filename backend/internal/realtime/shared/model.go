@@ -62,7 +62,6 @@ type ControlResponsePayload struct {
 	Status        string      `json:"status"` // success, failed, pending
 	Message       string      `json:"message,omitempty"`
 	Value         interface{} `json:"value,omitempty"`
-	ExecutedAt    time.Time   `json:"executed_at"`
 }
 
 // DeviceConfig represents device configuration

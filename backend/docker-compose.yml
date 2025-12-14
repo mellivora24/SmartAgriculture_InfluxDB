@@ -44,18 +44,6 @@ services:
     networks:
       - sa_network
 
-  grafana:
-    image: grafana/grafana:10.2.3
-    container_name: sa_grafana
-    environment:
-      GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: admin123456
-      GF_INSTALL_PLUGINS: ''
-    ports:
-      - "3000:3000"
-    networks:
-      - sa_network
-
 networks:
   sa_network:
     driver: bridge

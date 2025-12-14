@@ -238,8 +238,9 @@ $$ LANGUAGE plpgsql;
 -- FUNCTION: create_device_command
 -- Tạo lệnh điều khiển thiết bị
 -- ============================================
+DROP FUNCTION create_device_command;
 CREATE OR REPLACE FUNCTION create_device_command(
-    p_user_id UUID,
+    survey_point_id UUID,
     p_device_name VARCHAR,
     p_command VARCHAR
 )
@@ -258,8 +259,8 @@ BEGIN
     END IF;
 
     -- Create command
-    INSERT INTO tbl_device_commands (user_id, device_name, command, status)
-    VALUES (p_user_id, p_device_name, p_command, 'pending')
+    INSERT INTO tbl_device_commands (survey_point_id, device_name, command, status)
+    VALUES (survey_point_id, p_device_name, p_command, 'pending')
     RETURNING id INTO v_command_id;
 
     RETURN QUERY SELECT true, v_command_id, 'Command created successfully'::TEXT;
@@ -338,14 +339,15 @@ $$ LANGUAGE plpgsql;
 -- FUNCTION: get_command_history
 -- Lấy lịch sử lệnh điều khiển
 -- ============================================
+DROP FUNCTION get_command_history;
 CREATE OR REPLACE FUNCTION get_command_history(
-    p_user_id UUID DEFAULT NULL,
+    survey_point_id UUID DEFAULT NULL,
     p_device_name VARCHAR DEFAULT NULL,
     p_limit INT DEFAULT 50
 )
     RETURNS TABLE (
                       command_id UUID,
-                      user_id UUID,
+                      survey_point_id UUID,
                       username VARCHAR,
                       device_name VARCHAR,
                       command VARCHAR,
@@ -357,7 +359,7 @@ BEGIN
     RETURN QUERY
         SELECT
             dc.id,
-            dc.user_id,
+            dc.survey_point_id,
             u.username,
             dc.device_name,
             dc.command,
@@ -365,9 +367,9 @@ BEGIN
             dc.executed_at,
             dc.created_at
         FROM tbl_device_commands dc
-                 LEFT JOIN tbl_users u ON dc.user_id = u.id
+                 LEFT JOIN tbl_survey_points u ON dc.user_id = u.id
         WHERE
-            (p_user_id IS NULL OR dc.user_id = p_user_id)
+            (survey_point_id IS NULL OR dc.user_id = survey_point_id)
           AND (p_device_name IS NULL OR dc.device_name = p_device_name)
         ORDER BY dc.created_at DESC
         LIMIT p_limit;
