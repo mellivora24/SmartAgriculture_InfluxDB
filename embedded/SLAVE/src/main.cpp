@@ -4,61 +4,97 @@
 #include <BH1750.h>
 #include <SPI.h>
 #include <LoRa.h>
-#include <ArduinoJson.h>
 
+// ========== PIN CONFIG ==========
 #define DHTPIN 6
 #define DHTTYPE DHT11
 #define SOIL_PIN A0
-#define RELAY_PIN 3  // This controls the pump relay
+#define RELAY_PIN 3
 
-const char* SURVEY_POINT_ID = "ebf5507b-259c-4471-8be5-00f86b3cbaf0";
-
+// ========== LORA CONFIG ==========
 #define LORA_NSS 10
 #define LORA_RST 9
 #define LORA_DIO0 2
+#define LORA_FREQUENCY 433E6
 
+// ========== NODE ID ==========
+const char NODE_ID = 'B'; // Thay đổi: 'A', 'B', 'C' cho mỗi node
+
+// ========== OBJECTS ==========
 DHT dht(DHTPIN, DHTTYPE);
 BH1750 lightMeter;
 
+// ========== VARIABLES ==========
 unsigned long lastSend = 0;
+unsigned int packetCounter = 0;
+bool waitingForAck = false;
+unsigned long lastSendTime = 0;
+String lastMessage = "";
+int retryCount = 0;
 
-// ========== FORWARD DECLARATIONS ==========
-void handleControlCommand(JsonDocument& doc);
-void sendControlResponse(String device, String cmd, String status, String message);
+// ========== SETTINGS ==========
+const int SEND_INTERVAL = 5000;  // 5 giây
+const int ACK_TIMEOUT = 2000;    // 2 giây
+const int MAX_RETRY = 3;
+
+void sendResponse(String status);
 void sendSensorData();
+void handleCommand(String device, String cmd);
 
-// ========== SETUP ==========
 void setup() {
   Serial.begin(9600);
+  delay(1000);
   
+  // Seed random
+  randomSeed(analogRead(A1));
+  
+  Serial.println("===============================");
+  Serial.println("  NANO SENDER - Simple Format");
+  Serial.println("===============================");
+  
+  // Khởi tạo cảm biến
+  Serial.print("DHT11...");
   dht.begin();
+  Serial.println(" OK");
+  
+  Serial.print("BH1750...");
   Wire.begin();
-  lightMeter.begin();
+  if (lightMeter.begin()) {
+    Serial.println(" OK");
+  } else {
+    Serial.println(" LOI!");
+  }
   
   pinMode(RELAY_PIN, OUTPUT);
   digitalWrite(RELAY_PIN, LOW);
+  Serial.println("Relay... OK");
   
+  // Khởi tạo LoRa
+  Serial.print("LoRa...");
   LoRa.setPins(LORA_NSS, LORA_RST, LORA_DIO0);
   
-  Serial.print("Initializing LoRa...");
-  if (!LoRa.begin(433E6)) {
-    Serial.println("FAILED!");
-    while (1);
+  if (!LoRa.begin(LORA_FREQUENCY)) {
+    Serial.println(" THAT BAI!");
+    while (1) {
+      delay(1000);
+      Serial.println("Kiem tra ket noi LoRa!");
+    }
   }
   
   LoRa.setSpreadingFactor(7);
   LoRa.setSignalBandwidth(125E3);
   LoRa.setCodingRate4(5);
-  LoRa.setSyncWord(0x34);
+  LoRa.setSyncWord(0x12);
+  LoRa.setTxPower(17);
   
-  Serial.println("OK!");
-  Serial.println("Survey Point: " + String(SURVEY_POINT_ID));
-  Serial.println("Relay/Pump: Pin " + String(RELAY_PIN));
+  Serial.println(" OK");
+  Serial.println("===============================");
+  Serial.println("Node: " + String(NODE_ID));
+  Serial.println("===============================\n");
 }
 
-// ========== LOOP ==========
 void loop() {
-  // ===== RECEIVE CONTROL COMMANDS =====
+  // Nhận ACK hoặc lệnh điều khiển
   int packetSize = LoRa.parsePacket();
   if (packetSize) {
     String recv = "";
@@ -66,106 +102,139 @@ void loop() {
       recv += (char)LoRa.read();
     }
     
-    Serial.println("\n--- Received ---");
-    Serial.println(recv);
+    Serial.println("[RECV] " + recv);
     
-    StaticJsonDocument<256> doc;
-    if (deserializeJson(doc, recv) == DeserializationError::Ok) {
-      String msgType = doc["type"] | "";
-      String pointId = doc["survey_point_id"] | "";
+    // Kiểm tra ACK: ACK,A,123
+    if (recv.startsWith("ACK,")) {
+      int idx1 = recv.indexOf(',');
+      int idx2 = recv.indexOf(',', idx1 + 1);
       
-      // Check if command is for this survey point
-      if (msgType == "control" && pointId == SURVEY_POINT_ID) {
-        handleControlCommand(doc);
+      char nodeId = recv.charAt(idx1 + 1);
+      int ackPacketId = recv.substring(idx2 + 1).toInt();
+      
+      if (nodeId == NODE_ID && ackPacketId == (packetCounter - 1)) {
+        waitingForAck = false;
+        Serial.println("[ACK] Thanh cong!");
+      }
+    }
+    // Kiểm tra lệnh: CMD,A,relay,on
+    else if (recv.startsWith("CMD,")) {
+      int idx1 = recv.indexOf(',');
+      int idx2 = recv.indexOf(',', idx1 + 1);
+      int idx3 = recv.indexOf(',', idx2 + 1);
+      
+      char nodeId = recv.charAt(idx1 + 1);
+      String device = recv.substring(idx2 + 1, idx3);
+      String cmd = recv.substring(idx3 + 1);
+      
+      if (nodeId == NODE_ID) {
+        handleCommand(device, cmd);
       }
     }
   }
   
-  // ===== SEND SENSOR DATA =====
-  if (millis() - lastSend > 5000) {
-    lastSend = millis();
+  // Kiểm tra timeout và retry
+  if (waitingForAck && (millis() - lastSendTime > ACK_TIMEOUT)) {
+    if (retryCount < MAX_RETRY) {
+      retryCount++;
+      Serial.println("[RETRY] " + String(retryCount) + "/" + String(MAX_RETRY));
+      
+      // Random delay để tránh collision
+      delay(random(50, 300));
+      
+      LoRa.beginPacket();
+      LoRa.print(lastMessage);
+      LoRa.endPacket(true);
+      
+      lastSendTime = millis();
+    } else {
+      Serial.println("[ERROR] Khong nhan ACK!");
+      waitingForAck = false;
+      retryCount = 0;
+    }
+  }
+  
+  // Gửi dữ liệu định kỳ
+  if (!waitingForAck && (millis() - lastSend >= SEND_INTERVAL)) {
     sendSensorData();
   }
 }
 
-// ========== CONTROL FUNCTIONS ==========
-void handleControlCommand(JsonDocument& doc) {
-  String device = doc["device"] | "";
-  String cmd = doc["cmd"] | "";
-  
-  String status = "success";
-  String message = "";
-  
-  // Handle both "relay" and "pump" as the same device
-  if (device == "relay" || device == "pump") {
-    if (cmd == "on") {
-      digitalWrite(RELAY_PIN, HIGH);
-      Serial.println("✓ Pump/Relay ON");
-      message = device + " turned on";
-    } 
-    else if (cmd == "off") {
-      digitalWrite(RELAY_PIN, LOW);
-      Serial.println("✓ Pump/Relay OFF");
-      message = device + " turned off";
-    } 
-    else {
-      status = "failed";
-      message = "Unknown command: " + cmd;
-      Serial.println("✗ Unknown command");
-    }
-  } 
-  else {
-    status = "failed";
-    message = "Unknown device: " + device;
-    Serial.println("✗ Unknown device");
-  }
-  
-  // Send response back to Gateway
-  sendControlResponse(device, cmd, status, message);
-}
-
-void sendControlResponse(String device, String cmd, String status, String message) {
-  StaticJsonDocument<384> doc;
-  doc["type"] = "control_response";
-  doc["survey_point_id"] = SURVEY_POINT_ID;
-  doc["device"] = device;
-  doc["cmd"] = cmd;
-  doc["status"] = status;
-  doc["message"] = message;
-  
-  String json;
-  serializeJson(doc, json);
-  
-  LoRa.beginPacket();
-  LoRa.print(json);
-  LoRa.endPacket();
-  
-  Serial.println("Sent response: " + json);
-}
-
-// ========== SENSOR FUNCTIONS ==========
 void sendSensorData() {
+  // Đọc cảm biến
   float temp = dht.readTemperature();
   float hum = dht.readHumidity();
   float lux = lightMeter.readLightLevel();
   int soilRaw = analogRead(SOIL_PIN);
   int soil = map(soilRaw, 0, 1023, 0, 100);
+  int relay = digitalRead(RELAY_PIN);
   
-  StaticJsonDocument<384> doc;
-  doc["type"] = "sensor";
-  doc["survey_point_id"] = SURVEY_POINT_ID;
-  doc["temp"] = isnan(temp) ? 0 : temp;
-  doc["hum"] = isnan(hum) ? 0 : hum;
-  doc["lux"] = lux;
-  doc["soil"] = soil;
-  doc["relay"] = digitalRead(RELAY_PIN);  // Current pump/relay state
+  // Xử lý giá trị NaN
+  if (isnan(temp)) temp = 0;
+  if (isnan(hum)) hum = 0;
+  if (lux < 0) lux = 0;
   
-  String json;
-  serializeJson(doc, json);
+  // Format: NodeID,PacketID,Temp,Hum,Lux,Soil,Relay
+  // Ví dụ: A,123,25.5,60.2,450.0,65,1
+  String message = String(NODE_ID) + "," +
+                   String(packetCounter) + "," +
+                   String(temp, 1) + "," +
+                   String(hum, 1) + "," +
+                   String(lux, 1) + "," +
+                   String(soil) + "," +
+                   String(relay);
+  
+  Serial.println("\n[SEND #" + String(packetCounter) + "]");
+  Serial.println("  T=" + String(temp, 1) + "C  H=" + String(hum, 1) + "%");
+  Serial.println("  L=" + String(lux, 1) + "lx  S=" + String(soil) + "%  R=" + String(relay));
+  Serial.println("  Data: " + message);
+  
+  // Random delay nhỏ để tránh collision
+  delay(random(10, 100));
+  
+  // Gửi
+  LoRa.beginPacket();
+  LoRa.print(message);
+  LoRa.endPacket(true);
+  
+  lastMessage = message;
+  lastSendTime = millis();
+  lastSend = millis();
+  waitingForAck = true;
+  retryCount = 0;
+  packetCounter++;
+}
+
+void handleCommand(String device, String cmd) {
+  Serial.println("[CMD] " + device + " -> " + cmd);
+  
+  if (device == "relay" || device == "pump") {
+    if (cmd == "on") {
+      digitalWrite(RELAY_PIN, HIGH);
+      Serial.println("  => Bat relay");
+      sendResponse("OK");
+    } 
+    else if (cmd == "off") {
+      digitalWrite(RELAY_PIN, LOW);
+      Serial.println("  => Tat relay");
+      sendResponse("OK");
+    }
+    else {
+      sendResponse("ERROR");
+    }
+  }
+}
+
+void sendResponse(String status) {
+  // Format: RESP,NodeID,Status
+  // Ví dụ: RESP,A,OK
+  String response = "RESP," + String(NODE_ID) + "," + status;
+  
+  delay(random(10, 50));
   
   LoRa.beginPacket();
-  LoRa.print(json);
-  LoRa.endPacket();
+  LoRa.print(response);
+  LoRa.endPacket(true);
   
-  Serial.println("Sent: " + json);
+  Serial.println("[RESP] " + response);
 }

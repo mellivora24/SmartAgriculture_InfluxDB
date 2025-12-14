@@ -5,416 +5,318 @@
 #include <LoRa.h>
 #include <ArduinoJson.h>
 
-// ========== CONFIG ==========
-const char* WIFI_SSID = "WiFi";
-const char* WIFI_PASSWORD = "12345678";
+#define WIFI_SSID "KidsLAB"
+#define WIFI_PASSWORD "hoianhHung"
 
-const char* MQTT_BROKER = "172.20.10.2";
-const int MQTT_PORT = 1883;
-const char* MQTT_USER = "admin";
-const char* MQTT_PASSWORD = "admin123456";
+#define MQTT_SERVER "192.168.1.104"
+#define MQTT_PORT 1883
+#define MQTT_USER "admin"
+#define MQTT_PASSWORD "admin123456"
 
-const char* USER_ID = "b57ccce6-97e1-4a0d-8c46-dc1e8fde9f8a";
-const char* MCU_CODE = "123456";
+#define USER_ID "c4e56f18-ec8d-4a09-8555-fd88c7886c6e"
+#define MCU_CODE "439112"
 
-// ========== LORA CONFIG ==========
+struct NodeConfig {
+  char nodeId;
+  const char* surveyPointId;
+};
+
+NodeConfig nodeMapping[] = {
+  {'A', "7d3c6820-1699-42b7-a6d2-58ece4957c38"},
+  {'B', "65c88cda-07c5-4aca-bdf6-9defadf0dc26"},
+};
+
+const int NODE_COUNT = sizeof(nodeMapping) / sizeof(NodeConfig);
+
 #define LORA_NSS D8
 #define LORA_RST D0
 #define LORA_DIO0 D1
+#define LORA_FREQUENCY 433E6
 
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
 
-// ========== TOPICS ==========
-String topicSensorData;
-String topicControlRequestUser;      // user/{USER_ID}/mcu/{MCU_CODE}/control/request
-String topicControlRequestSystem;    // system/mcu/{MCU_CODE}/control/request
-String topicControlResponse;
-String topicAlert;
-
 unsigned long lastReconnect = 0;
-unsigned long lastHealthCheck = 0;
+unsigned long totalReceived = 0;
 
-// ========== FORWARD DECLARATIONS ==========
+struct PendingCommand {
+  char nodeId;
+  String surveyPointId;
+  String deviceName;
+  String command;
+  int expectedState;
+  bool pending;
+  unsigned long timestamp;
+};
+
+PendingCommand pendingCommands[10];
+int pendingCount = 0;
+
 void setupWiFi();
-void setupLoRa();
+void setupMQTT();
 void reconnectMQTT();
 void mqttCallback(char* topic, byte* payload, unsigned int length);
-void handleControlRequest(String message);
-void receiveLoRaData();
-void handleSensorData(JsonDocument& nodeDoc);
-void handleControlResponse(JsonDocument& nodeDoc);
-void publishControlResponse(String surveyPointId, String deviceName, String command, String status, String message);
-void publishAlert(String title, String message, String severity);
-void sendHealthCheck();
+void parseSensorData(String data, int rssi, float snr);
+void sendToMQTT(char nodeId, int packetId, float temp, float hum, float lux, int soil, int relay, int rssi, float snr);
+void handleControlRequest(JsonDocument& doc);
+void sendControlToNode(char nodeId, String device, String command);
+void checkPendingCommands(char nodeId, int relayState);
+String getNodeId(const char* surveyPointId);
+const char* getSurveyPointId(char nodeId);
 
-// ========== SETUP ==========
 void setup() {
   Serial.begin(115200);
-  Serial.println("\n\n=== ESP8266 LoRa-MQTT Gateway (Dual Topic) ===");
-  
-  // Build topics
-  topicSensorData = "user/" + String(USER_ID) + "/mcu/" + String(MCU_CODE) + "/data";
-  topicControlRequestUser = "user/" + String(USER_ID) + "/mcu/" + String(MCU_CODE) + "/control/request";
-  topicControlRequestSystem = "system/mcu/" + String(MCU_CODE) + "/control/request";
-  topicControlResponse = "user/" + String(USER_ID) + "/mcu/" + String(MCU_CODE) + "/control/response";
-  topicAlert = "user/" + String(USER_ID) + "/mcu/" + String(MCU_CODE) + "/alert";
-  
+  delay(1000);
+
   setupWiFi();
-  
-  mqttClient.setServer(MQTT_BROKER, MQTT_PORT);
-  mqttClient.setCallback(mqttCallback);
-  mqttClient.setBufferSize(1024);
-  
-  setupLoRa();
-  
-  Serial.println("=== Ready ===\n");
-}
+  setupMQTT();
 
-// ========== LOOP ==========
-void loop() {
-  if (!mqttClient.connected()) {
-    reconnectMQTT();
-  }
-  mqttClient.loop();
-  
-  if (millis() - lastHealthCheck > 30000) {
-    lastHealthCheck = millis();
-    sendHealthCheck();
-  }
-  
-  receiveLoRaData();
-  
-  delay(10);
-}
-
-// ========== WIFI FUNCTIONS ==========
-void setupWiFi() {
-  Serial.print("Connecting to WiFi");
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 30) {
-    delay(500);
-    Serial.print(".");
-    attempts++;
-  }
-  
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\n✓ WiFi connected");
-    Serial.print("IP: ");
-    Serial.println(WiFi.localIP());
-  } else {
-    Serial.println("\n✗ WiFi failed");
-  }
-}
-
-// ========== LORA FUNCTIONS ==========
-void setupLoRa() {
   LoRa.setPins(LORA_NSS, LORA_RST, LORA_DIO0);
-  
-  Serial.print("Initializing LoRa...");
-  if (!LoRa.begin(433E6)) {
-    Serial.println("FAILED!");
-    return;
+
+  if (!LoRa.begin(LORA_FREQUENCY)) {
+    Serial.println(" THAT BAI!");
+    while (1) delay(1000);
   }
-  
+
   LoRa.setSpreadingFactor(7);
   LoRa.setSignalBandwidth(125E3);
   LoRa.setCodingRate4(5);
-  LoRa.setSyncWord(0x34);
-  
-  Serial.println("OK!");
+  LoRa.setSyncWord(0x12);
+  LoRa.setTxPower(20);
+
+  Serial.println("===============================");
+  Serial.println("User ID: " + String(USER_ID));
+  Serial.println("MCU Code: " + String(MCU_CODE));
+  Serial.println("===============================");
 }
 
-void receiveLoRaData() {
+void loop() {
+  if (!mqttClient.connected()) {
+    if (millis() - lastReconnect > 5000) {
+      reconnectMQTT();
+      lastReconnect = millis();
+    }
+  }
+  mqttClient.loop();
+
   int packetSize = LoRa.parsePacket();
-  if (packetSize == 0) return;
-  
-  String recv = "";
-  while (LoRa.available()) {
-    recv += (char)LoRa.read();
+  if (packetSize) {
+    String data = "";
+    while (LoRa.available()) {
+      data += (char)LoRa.read();
+    }
+
+    int rssi = LoRa.packetRssi();
+    float snr = LoRa.packetSnr();
+
+    if (data.startsWith("RESP,")) {
+      int idx1 = data.indexOf(',');
+      int idx2 = data.indexOf(',', idx1 + 1);
+
+      if (idx1 > 0 && idx2 > 0) {
+        char nodeId = data.charAt(idx1 + 1);
+        String status = data.substring(idx2 + 1);
+
+        for (int i = 0; i < pendingCount; i++) {
+          if (pendingCommands[i].pending && pendingCommands[i].nodeId == nodeId) {
+            StaticJsonDocument<512> doc;
+            doc["topic"] = "control_response";
+
+            JsonObject payload = doc.createNestedObject("payload");
+            payload["survey_point_id"] = pendingCommands[i].surveyPointId;
+            payload["mcu_code"] = MCU_CODE;
+            payload["device_name"] = pendingCommands[i].deviceName;
+            payload["command"] = pendingCommands[i].command;
+            payload["status"] = (status == "OK") ? "success" : "failed";
+
+            String message;
+            serializeJson(doc, message);
+
+            String topic = "user/" + String(USER_ID) + "/mcu/" + String(MCU_CODE) + "/control/response";
+            mqttClient.publish(topic.c_str(), message.c_str());
+
+            pendingCommands[i].pending = false;
+            break;
+          }
+        }
+      }
+    } else if (data.indexOf(',') > 0) {
+      parseSensorData(data, rssi, snr);
+    }
   }
-  
-  int rssi = LoRa.packetRssi();
-  float snr = LoRa.packetSnr();
-  
-  Serial.println("\n--- LoRa RX ---");
-  Serial.printf("RSSI: %d dBm, SNR: %.2f dB\n", rssi, snr);
-  Serial.println("Data: " + recv);
-  
-  StaticJsonDocument<512> nodeDoc;
-  DeserializationError err = deserializeJson(nodeDoc, recv);
-  
-  if (err) {
-    Serial.println("✗ Parse error: " + String(err.c_str()));
-    return;
-  }
-  
-  String msgType = nodeDoc["type"] | "sensor";
-  
-  if (msgType == "sensor") {
-    handleSensorData(nodeDoc);
-  } else if (msgType == "control_response") {
-    handleControlResponse(nodeDoc);
+
+  for (int i = 0; i < pendingCount; i++) {
+    if (pendingCommands[i].pending &&
+        millis() - pendingCommands[i].timestamp > 30000) {
+      pendingCommands[i].pending = false;
+    }
   }
 }
 
-// ========== SENSOR DATA ==========
-void handleSensorData(JsonDocument& nodeDoc) {
-  String surveyPointId = nodeDoc["survey_point_id"] | "";
-  
-  if (surveyPointId.length() == 0) {
-    Serial.println("✗ Missing survey_point_id");
-    return;
-  }
-  
-  StaticJsonDocument<768> mqttDoc;
-  
-  JsonObject payload = mqttDoc.createNestedObject("payload");
-  payload["mcu_code"] = MCU_CODE;
-  payload["survey_point_id"] = surveyPointId;
-  
-  if (nodeDoc.containsKey("temp")) {
-    payload["temperature"] = nodeDoc["temp"].as<float>();
-  }
-  if (nodeDoc.containsKey("hum")) {
-    payload["humidity"] = nodeDoc["hum"].as<float>();
-  }
-  if (nodeDoc.containsKey("soil")) {
-    payload["soil_moisture"] = nodeDoc["soil"].as<float>();
-  }
-  if (nodeDoc.containsKey("lux")) {
-    payload["light"] = nodeDoc["lux"].as<float>();
-  }
-  
-  mqttDoc["topic"] = topicSensorData;
-  mqttDoc["timestamp"] = millis();
-  
-  String json;
-  serializeJson(mqttDoc, json);
-  
-  if (mqttClient.publish(topicSensorData.c_str(), json.c_str())) {
-    Serial.println("✓ Published sensor data");
-  } else {
-    Serial.println("✗ Publish failed");
+void setupWiFi() {
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+    delay(500);
+    attempts++;
   }
 }
 
-// ========== CONTROL RESPONSE ==========
-void handleControlResponse(JsonDocument& nodeDoc) {
-  String surveyPointId = nodeDoc["survey_point_id"] | "";
-  String deviceName = nodeDoc["device"] | "";
-  String command = nodeDoc["cmd"] | "";
-  String status = nodeDoc["status"] | "success";
-  String message = nodeDoc["message"] | "";
-  
-  if (surveyPointId.length() == 0) {
-    Serial.println("✗ Missing survey_point_id in response");
-    return;
-  }
-  
-  StaticJsonDocument<768> mqttDoc;
-  
-  JsonObject payload = mqttDoc.createNestedObject("payload");
-  payload["survey_point_id"] = surveyPointId;
-  payload["mcu_code"] = MCU_CODE;
-  payload["device_name"] = deviceName;
-  payload["command"] = command;
-  payload["status"] = status;
-  
-  if (message.length() > 0) {
-    payload["message"] = message;
-  }
-  
-  payload["executed_at"] = millis();
-  
-  mqttDoc["topic"] = topicControlResponse;
-  mqttDoc["timestamp"] = millis();
-  
-  String json;
-  serializeJson(mqttDoc, json);
-  
-  if (mqttClient.publish(topicControlResponse.c_str(), json.c_str())) {
-    Serial.println("✓ Published control response");
-  } else {
-    Serial.println("✗ Publish failed");
-  }
+void setupMQTT() {
+  mqttClient.setServer(MQTT_SERVER, MQTT_PORT);
+  mqttClient.setCallback(mqttCallback);
+  mqttClient.setBufferSize(1024);
 }
 
-// ========== MQTT FUNCTIONS ==========
 void reconnectMQTT() {
-  if (millis() - lastReconnect < 5000) return;
-  lastReconnect = millis();
-  
-  Serial.print("Connecting to MQTT...");
-  
-  String clientId = "ESP8266_" + String(MCU_CODE) + "_" + String(random(0xffff), HEX);
-  
-  bool connected = false;
-  if (strlen(MQTT_USER) > 0) {
-    connected = mqttClient.connect(clientId.c_str(), MQTT_USER, MQTT_PASSWORD);
-  } else {
-    connected = mqttClient.connect(clientId.c_str());
-  }
-  
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  String clientId = "ESP8266_" + String(MCU_CODE);
+  bool connected = mqttClient.connect(clientId.c_str(), MQTT_USER, MQTT_PASSWORD);
+
   if (connected) {
-    Serial.println("✓ Connected!");
-    
-    // Subscribe to BOTH user and system control topics
-    if (mqttClient.subscribe(topicControlRequestUser.c_str())) {
-      Serial.println("✓ Subscribed: " + topicControlRequestUser);
-    } else {
-      Serial.println("✗ Subscribe failed (user topic)");
-    }
-    
-    if (mqttClient.subscribe(topicControlRequestSystem.c_str())) {
-      Serial.println("✓ Subscribed: " + topicControlRequestSystem);
-    } else {
-      Serial.println("✗ Subscribe failed (system topic)");
-    }
-    
-    mqttClient.subscribe("/health/request");
-    
-  } else {
-    Serial.print("✗ Failed, rc=");
-    Serial.println(mqttClient.state());
+    mqttClient.subscribe(("system/mcu/" + String(MCU_CODE) + "/control/request").c_str());
+    mqttClient.subscribe(("user/" + String(USER_ID) + "/mcu/" + String(MCU_CODE) + "/control/request").c_str());
   }
 }
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   String message = "";
-  for (unsigned int i = 0; i < length; i++) {
-    message += (char)payload[i];
-  }
-  
-  Serial.println("\n--- MQTT RX ---");
-  Serial.println("Topic: " + String(topic));
-  Serial.println("Message: " + message);
-  
-  // Health check
-  if (strcmp(topic, "/health/request") == 0) {
-    mqttClient.publish("/health/response", "ok");
-    Serial.println("✓ Health response sent");
-    return;
-  }
-  
-  // Control request from either user or system topic
-  if (String(topic) == topicControlRequestUser || String(topic) == topicControlRequestSystem) {
-    Serial.println("✓ Control request received from: " + String(topic));
-    handleControlRequest(message);
+  for (unsigned int i = 0; i < length; i++) message += (char)payload[i];
+
+  StaticJsonDocument<512> doc;
+  if (deserializeJson(doc, message)) return;
+
+  handleControlRequest(doc);
+}
+
+void handleControlRequest(JsonDocument& doc) {
+  JsonObject payload = doc.containsKey("payload") ? doc["payload"] : doc.as<JsonObject>();
+
+  const char* surveyPointId = payload["survey_point_id"];
+  const char* deviceName = payload["device_name"];
+  const char* command = payload["command"];
+
+  if (!surveyPointId || !deviceName || !command) return;
+
+  String nodeIdStr = getNodeId(surveyPointId);
+  if (nodeIdStr.length() == 0) return;
+
+  char nodeId = nodeIdStr.charAt(0);
+  sendControlToNode(nodeId, deviceName, command);
+
+  if (pendingCount < 10) {
+    pendingCommands[pendingCount++] = {
+      nodeId,
+      surveyPointId,
+      deviceName,
+      command,
+      String(command) == "on",
+      true,
+      millis()
+    };
   }
 }
 
-void handleControlRequest(String message) {
-  StaticJsonDocument<768> doc;
-  DeserializationError err = deserializeJson(doc, message);
-  
-  if (err) {
-    Serial.println("✗ Parse error: " + String(err.c_str()));
-    return;
-  }
-  
-  // Extract nested payload
-  JsonObject payload;
-  if (doc.containsKey("payload")) {
-    payload = doc["payload"].as<JsonObject>();
-  } else {
-    payload = doc.as<JsonObject>();
-  }
-  
-  String surveyPointId = payload["survey_point_id"] | "";
-  String deviceName = payload["device_name"] | "";
-  String command = payload["command"] | "";
-  
-  if (surveyPointId.length() == 0 || deviceName.length() == 0 || command.length() == 0) {
-    Serial.println("✗ Invalid control request");
-    return;
-  }
-  
-  Serial.printf("Control: %s -> %s (%s)\n", 
-                deviceName.c_str(), command.c_str(), surveyPointId.c_str());
-  
-  // Build command for Node - map "pump" to "relay" if needed
-  StaticJsonDocument<256> cmdDoc;
-  cmdDoc["type"] = "control";
-  cmdDoc["survey_point_id"] = surveyPointId;
-  
-  // Map device names: pump -> relay
-  if (deviceName == "pump") {
-    cmdDoc["device"] = "relay";
-    Serial.println("ℹ Mapped 'pump' -> 'relay'");
-  } else {
-    cmdDoc["device"] = deviceName;
-  }
-  
-  cmdDoc["cmd"] = command;
-  
-  // Add extra fields if present
-  if (payload.containsKey("value")) {
-    cmdDoc["value"] = payload["value"];
-  }
-  
-  String cmdJson;
-  serializeJson(cmdDoc, cmdJson);
-  
-  // Send via LoRa
+void sendControlToNode(char nodeId, String device, String command) {
+  String message = "CMD," + String(nodeId) + "," + device + "," + command;
   LoRa.beginPacket();
-  LoRa.print(cmdJson);
+  LoRa.print(message);
   LoRa.endPacket();
-  
-  Serial.println("✓ Sent to Node: " + cmdJson);
-  
-  // Send immediate pending response to MQTT (use original device name)
-  publishControlResponse(surveyPointId, deviceName, command, "pending", "Command sent to node");
 }
 
-void publishControlResponse(String surveyPointId, String deviceName, 
-                           String command, String status, String message) {
-  StaticJsonDocument<768> mqttDoc;
-  
-  JsonObject payload = mqttDoc.createNestedObject("payload");
+void parseSensorData(String data, int rssi, float snr) {
+  int comma[6], count = 0;
+  for (int i = 0; i < data.length() && count < 6; i++)
+    if (data[i] == ',') comma[count++] = i;
+  if (count != 6) return;
+
+  char nodeId = data[0];
+  int packetId = data.substring(comma[0] + 1, comma[1]).toInt();
+  float temp = data.substring(comma[1] + 1, comma[2]).toFloat();
+  float hum = data.substring(comma[2] + 1, comma[3]).toFloat();
+  float lux = data.substring(comma[3] + 1, comma[4]).toFloat();
+  int soil = data.substring(comma[4] + 1, comma[5]).toInt();
+  int relay = data.substring(comma[5] + 1).toInt();
+
+  LoRa.beginPacket();
+  LoRa.print("ACK," + String(nodeId) + "," + String(packetId));
+  LoRa.endPacket();
+
+  sendToMQTT(nodeId, packetId, temp, hum, lux, soil, relay, rssi, snr);
+  checkPendingCommands(nodeId, relay);
+}
+
+void sendToMQTT(char nodeId, int packetId, float temp, float hum, float lux, int soil, int relay, int rssi, float snr) {
+  if (!mqttClient.connected()) return;
+
+  const char* surveyPointId = getSurveyPointId(nodeId);
+  if (!surveyPointId) return;
+
+  StaticJsonDocument<768> doc;
+  doc["topic"] = "sensor_data";
+
+  JsonObject payload = doc.createNestedObject("payload");
+  payload["mcu_code"] = MCU_CODE;
   payload["survey_point_id"] = surveyPointId;
-  payload["mcu_code"] = MCU_CODE;
-  payload["device_name"] = deviceName;
-  payload["command"] = command;
-  payload["status"] = status;
-  payload["message"] = message;
-  payload["executed_at"] = millis();
-  
-  mqttDoc["topic"] = topicControlResponse;
-  mqttDoc["timestamp"] = millis();
-  
-  String json;
-  serializeJson(mqttDoc, json);
-  
-  if (mqttClient.publish(topicControlResponse.c_str(), json.c_str())) {
-    Serial.println("✓ Published control response: " + status);
+  payload["temperature"] = temp;
+  payload["humidity"] = hum;
+  payload["soil_moisture"] = soil;
+  payload["light"] = lux;
+
+  JsonObject extra = payload.createNestedObject("extra");
+  extra["packet_id"] = packetId;
+  extra["relay_state"] = relay;
+  extra["signal_strength"] = rssi;
+  extra["snr"] = snr;
+
+  String message;
+  serializeJson(doc, message);
+
+  mqttClient.publish(("user/" + String(USER_ID) + "/mcu/" + String(MCU_CODE) + "/data").c_str(), message.c_str());
+}
+
+void checkPendingCommands(char nodeId, int relayState) {
+  for (int i = 0; i < pendingCount; i++) {
+    if (pendingCommands[i].pending &&
+        pendingCommands[i].nodeId == nodeId &&
+        pendingCommands[i].expectedState == relayState) {
+
+      StaticJsonDocument<512> doc;
+      doc["topic"] = "control_response";
+
+      JsonObject payload = doc.createNestedObject("payload");
+      payload["survey_point_id"] = pendingCommands[i].surveyPointId;
+      payload["mcu_code"] = MCU_CODE;
+      payload["device_name"] = pendingCommands[i].deviceName;
+      payload["command"] = pendingCommands[i].command;
+      payload["status"] = "success";
+
+      String message;
+      serializeJson(doc, message);
+
+      mqttClient.publish(
+        ("user/" + String(USER_ID) + "/mcu/" + String(MCU_CODE) + "/control/response").c_str(),
+        message.c_str()
+      );
+
+      pendingCommands[i].pending = false;
+    }
   }
 }
 
-void publishAlert(String title, String message, String severity) {
-  StaticJsonDocument<768> mqttDoc;
-  
-  JsonObject payload = mqttDoc.createNestedObject("payload");
-  payload["mcu_code"] = MCU_CODE;
-  payload["title"] = title;
-  payload["message"] = message;
-  payload["severity"] = severity;
-  payload["time"] = millis();
-  
-  mqttDoc["topic"] = topicAlert;
-  mqttDoc["timestamp"] = millis();
-  
-  String json;
-  serializeJson(mqttDoc, json);
-  
-  mqttClient.publish(topicAlert.c_str(), json.c_str());
+String getNodeId(const char* surveyPointId) {
+  for (int i = 0; i < NODE_COUNT; i++)
+    if (strcmp(nodeMapping[i].surveyPointId, surveyPointId) == 0)
+      return String(nodeMapping[i].nodeId);
+  return "";
 }
 
-void sendHealthCheck() {
-  if (mqttClient.connected()) {
-    Serial.println("♥ Health check");
-  }
+const char* getSurveyPointId(char nodeId) {
+  for (int i = 0; i < NODE_COUNT; i++)
+    if (nodeMapping[i].nodeId == nodeId)
+      return nodeMapping[i].surveyPointId;
+  return nullptr;
 }

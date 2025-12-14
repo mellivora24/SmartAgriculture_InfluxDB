@@ -65,6 +65,8 @@ func (h *Handler) onHealthCheck(client mqtt.Client, msg mqtt.Message) {
 }
 
 func (h *Handler) onSensorData(client mqtt.Client, msg mqtt.Message) {
+	fmt.Println("Received sensor data message:", msg.Payload())
+
 	var mqttMsg shared.MQTTMessage
 	if err := json.Unmarshal(msg.Payload(), &mqttMsg); err != nil {
 		log.Printf("[MQTT Handler] Error unmarshaling sensor data: %v", err)
