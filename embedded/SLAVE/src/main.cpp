@@ -11,7 +11,7 @@
 #define SOIL_PIN A0
 #define RELAY_PIN 3  // This controls the pump relay
 
-const char* SURVEY_POINT_ID = "550e8400-e29b-41d4-a716-446655440000";
+const char* SURVEY_POINT_ID = "d896750c-ef2b-44e8-806c-1eb833d16ed4";
 
 #define LORA_NSS 10
 #define LORA_RST 9

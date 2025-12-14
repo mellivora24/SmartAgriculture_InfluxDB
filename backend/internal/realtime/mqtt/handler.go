@@ -41,10 +41,11 @@ func NewHandler(
 
 func (h *Handler) Init() error {
 	topics := map[string]mqtt.MessageHandler{
-		shared.MQTTTopicHealthRequest:   h.onHealthCheck,
-		shared.MQTTTopicSensorData:      h.onSensorData,
-		shared.MQTTTopicControlResponse: h.onControlResponse,
-		shared.MQTTTopicAlert:           h.onAlert,
+		shared.MQTTTopicHealthRequest:    h.onHealthCheck,
+		shared.MQTTTopicSensorData:       h.onSensorData,
+		shared.MQTTTopicControlResponse:  h.onControlResponse,
+		shared.MQTTTopicAlert:            h.onAlert,
+		"user/+/mcu/+/disease_detection": h.onDiseaseDetection,
 	}
 
 	for topic, handler := range topics {
@@ -376,6 +377,39 @@ func (h *Handler) onAlert(client mqtt.Client, msg mqtt.Message) {
 
 	log.Printf("[MQTT Handler] Processed alert for MCU: %s, Severity: %s",
 		alertPayload.MCUCode, alertPayload.Severity)
+}
+
+func (h *Handler) onDiseaseDetection(client mqtt.Client, msg mqtt.Message) {
+	var mqttMsg shared.MQTTMessage
+	if err := json.Unmarshal(msg.Payload(), &mqttMsg); err != nil {
+		log.Printf("[MQTT Handler] Error unmarshaling disease detection: %v", err)
+		return
+	}
+
+	payloadBytes, err := json.Marshal(mqttMsg.Payload)
+	if err != nil {
+		log.Printf("[MQTT Handler] Error marshaling payload: %v", err)
+		return
+	}
+
+	var diseasePayload shared.DiseaseDetectionPayload
+	if err := json.Unmarshal(payloadBytes, &diseasePayload); err != nil {
+		log.Printf("[MQTT Handler] Error unmarshaling disease payload: %v", err)
+		return
+	}
+
+	wsMsg := shared.WSMessage{
+		Topic:     "disease_detection",
+		Payload:   payloadBytes,
+		Timestamp: time.Now(),
+	}
+
+	if err := h.wsService.BroadcastToMCU(diseasePayload.MCUCode, wsMsg); err != nil {
+		log.Printf("[MQTT Handler] Error broadcasting disease detection: %v", err)
+	}
+
+	log.Printf("[MQTT Handler] Processed disease detection for MCU: %s, Disease: %s", diseasePayload.MCUCode, diseasePayload.DiseaseName)
+
 }
 
 func getFloatValue(val *float64) float64 {

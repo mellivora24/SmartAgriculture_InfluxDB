@@ -102,3 +102,10 @@ type ClientInfo struct {
 	MCUCode   string
 	ConnectAt time.Time
 }
+
+type DiseaseDetectionPayload struct {
+	MCUCode     string    `json:"mcu_code"`
+	DiseaseName string    `json:"disease_name"`
+	Confidence  float64   `json:"confidence"`
+	DetectedAt  time.Time `json:"detected_at"`
+}

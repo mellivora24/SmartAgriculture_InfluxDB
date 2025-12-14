@@ -12,6 +12,7 @@ from src.services.yolo_service import prediction
 from src.ultis.get_resource_path import ResourcePath
 from src.services.camera_service.camera import CameraThread
 
+
 class App(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -20,22 +21,26 @@ class App(QMainWindow):
 
         self.ui.result_infor.setText("")
         self.ui.predicted_res.setText("")
-        self.ui.predicting_btn.setText("Kiểm tra cây trồng")  # Đổi lại tên nút
+        self.ui.predicting_btn.setText("Kiểm tra cây trồng")
         self.ui.moreInfor_btn.clicked.connect(self.more_info)
-        self.ui.predicting_btn.clicked.connect(self.predict)  # Kết nối với chức năng predict
+        self.ui.predicting_btn.clicked.connect(self.predict)
 
         # Lưu frame gốc từ camera
         self.current_frame = None
 
         # MQTT Configuration
-        self.mqtt_broker = "YOUR_MQTT_BROKER_ADDRESS"  # Thay đổi địa chỉ broker
+        self.mqtt_broker = "localhost"
         self.mqtt_port = 1883
-        self.user_id = "YOUR_USER_ID"  # Thay đổi user ID của bạn
-        self.mcu_code = "YOUR_MCU_CODE"  # Thay đổi MCU code của bạn
-        self.mqtt_topic = f"user/{self.user_id}/mcu/{self.mcu_code}/alert"
+        self.user_id = "admin"  # Thay đổi user ID của bạn
+        self.mcu_code = "admin123456"  # Thay đổi MCU code của bạn
+
+        # FIXED: Tạo các topic đúng theo cấu trúc backend
+        self.mqtt_topic_alert = f"user/{self.user_id}/mcu/{self.mcu_code}/alert"
+        self.mqtt_topic_disease = f"user/{self.user_id}/mcu/{self.mcu_code}/disease_detection"
 
         # Initialize MQTT Client
         self.mqtt_client = mqtt.Client()
+        self.mqtt_client.username_pw_set("admin", "admin123456")
         self.mqtt_client.on_connect = self.on_mqtt_connect
         self.mqtt_client.on_disconnect = self.on_mqtt_disconnect
 
@@ -62,9 +67,41 @@ class App(QMainWindow):
     def on_mqtt_disconnect(self, client, userdata, rc):
         print("Đã ngắt kết nối MQTT broker")
 
+    def send_mqtt_disease_detection(self, disease_name, confidence=0.0):
+        """
+        Gửi thông tin disease detection qua MQTT
+        Topic: user/{user_id}/mcu/{mcu_code}/disease_detection
+        """
+        try:
+            # Payload theo cấu trúc DiseaseDetectionPayload trong Go
+            disease_payload = {
+                "mcu_code": self.mcu_code,
+                "disease_name": disease_name,
+                "confidence": confidence,
+                "detected_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            }
+
+            # Wrap trong MQTTMessage structure
+            mqtt_message = {
+                "topic": "disease_detection",
+                "payload": disease_payload
+            }
+
+            message_json = json.dumps(mqtt_message)
+            result = self.mqtt_client.publish(self.mqtt_topic_disease, message_json, qos=1)
+
+            if result.rc == mqtt.MQTT_ERR_SUCCESS:
+                print(f"✅ Đã gửi disease detection: {disease_name} (confidence: {confidence:.2f})")
+            else:
+                print(f"❌ Lỗi gửi disease detection MQTT: {result.rc}")
+
+        except Exception as e:
+            print(f"❌ Lỗi khi gửi disease detection MQTT: {e}")
+
     def send_mqtt_alert(self, disease_name, severity="warning"):
         """
-        Gửi cảnh báo qua MQTT
+        Gửi cảnh báo qua MQTT (optional - chỉ cho bệnh nghiêm trọng)
+        Topic: user/{user_id}/mcu/{mcu_code}/alert
         """
         try:
             alert_payload = {
@@ -76,25 +113,23 @@ class App(QMainWindow):
             }
 
             mqtt_message = {
-                "topic": self.mqtt_topic,
-                "payload": alert_payload,
-                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                "topic": "alert",
+                "payload": alert_payload
             }
 
             message_json = json.dumps(mqtt_message)
-            result = self.mqtt_client.publish(self.mqtt_topic, message_json, qos=1)
+            result = self.mqtt_client.publish(self.mqtt_topic_alert, message_json, qos=1)
 
             if result.rc == mqtt.MQTT_ERR_SUCCESS:
-                print(f"Đã gửi cảnh báo MQTT: {disease_name}")
+                print(f"✅ Đã gửi alert MQTT: {disease_name}")
             else:
-                print(f"Lỗi gửi MQTT: {result.rc}")
+                print(f"❌ Lỗi gửi alert MQTT: {result.rc}")
 
         except Exception as e:
-            print(f"Lỗi khi gửi cảnh báo MQTT: {e}")
+            print(f"❌ Lỗi khi gửi alert MQTT: {e}")
 
     def update_frame(self, frame):
         """ Cập nhật ảnh từ camera lên giao diện """
-        # Lưu frame gốc (QImage) để sử dụng cho prediction
         self.current_frame = frame
         self.ui.realtime_img.setPixmap(QPixmap.fromImage(frame))
 
@@ -103,15 +138,12 @@ class App(QMainWindow):
         Chuyển đổi QImage sang numpy array (OpenCV format)
         """
         try:
-            # Chuyển QImage sang RGB format nếu cần
             if qimage.format() != QImage.Format_RGB888:
                 qimage = qimage.convertToFormat(QImage.Format_RGB888)
 
-            # Lấy kích thước
             width = qimage.width()
             height = qimage.height()
 
-            # Chuyển đổi sang numpy array
             ptr = qimage.bits()
             ptr.setsize(height * width * 3)
             arr = np.array(ptr).reshape(height, width, 3)
@@ -158,7 +190,13 @@ class App(QMainWindow):
             print(f"Kích thước ảnh đầu vào: {cv_image.shape}")
 
             # Gọi hàm dự đoán
+            # IMPORTANT: Bạn cần modify hàm yolo_prediction để trả về confidence score
             res_name, res_description, res_image = prediction.yolo_prediction(cv_image)
+
+            # TODO: Nếu hàm yolo_prediction có thể trả về confidence, sử dụng như sau:
+            # res_name, res_description, res_image, confidence = prediction.yolo_prediction(cv_image)
+            # Nếu không, dùng giá trị mặc định:
+            confidence = 0.85  # Giá trị mặc định, bạn nên lấy từ YOLO model
 
             # Chuyển đổi kết quả về QImage để hiển thị
             result_qimage = self.cv2_to_qimage(res_image)
@@ -168,17 +206,31 @@ class App(QMainWindow):
                 res_img_scaled = res_pixmap.scaled(300, 250)
                 self.ui.predicted_img.setPixmap(res_img_scaled)
 
-            # Gửi cảnh báo qua MQTT nếu phát hiện bệnh
-            if res_name != "Cây khỏe mạnh" and res_name != "Lỗi dự đoán":
-                # Xác định mức độ nghiêm trọng dựa vào tên bệnh
-                severity = "warning"  # Mặc định là warning
-                # Bạn có thể tùy chỉnh severity dựa vào loại bệnh
-                if "nặng" in res_name.lower() or "nghiêm trọng" in res_name.lower():
-                    severity = "error"
-                elif "nhẹ" in res_name.lower():
-                    severity = "info"
+            # FIXED: Luôn gửi disease detection (bao gồm cả trường hợp khỏe mạnh)
+            if res_name != "Lỗi dự đoán":
+                # Gửi disease detection lên topic disease_detection
+                self.send_mqtt_disease_detection(res_name, confidence)
 
-                self.send_mqtt_alert(res_name, severity)
+                # Chỉ gửi alert nếu phát hiện bệnh (không phải cây khỏe mạnh)
+                if res_name != "Cây khỏe mạnh":
+                    # Xác định mức độ nghiêm trọng
+                    severity = "warning"  # Mặc định
+
+                    if confidence > 0.8:
+                        severity = "error"  # Bệnh nghiêm trọng
+                    elif confidence > 0.5:
+                        severity = "warning"
+                    else:
+                        severity = "info"
+
+                    # Override bằng từ khóa trong tên bệnh
+                    if "nặng" in res_name.lower() or "nghiêm trọng" in res_name.lower():
+                        severity = "error"
+                    elif "nhẹ" in res_name.lower():
+                        severity = "info"
+
+                    # Gửi alert cho bệnh nghiêm trọng
+                    self.send_mqtt_alert(res_name, severity)
 
             # Cập nhật giao diện
             self.ui.predicted_res.setText(res_name)

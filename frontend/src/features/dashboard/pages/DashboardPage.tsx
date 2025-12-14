@@ -22,6 +22,22 @@ interface PumpStatus {
   lastUpdate: string | null;
 }
 
+// NEW: Interface cho disease detection
+interface DiseaseDetectionPayload {
+  mcu_code: string;
+  disease_name: string;
+  confidence: number;
+  detected_at: string;
+}
+
+interface PlantHealthStatus {
+  disease_name: string;
+  confidence: number;
+  status: 'healthy' | 'diseased' | 'unknown';
+  detected_at: string;
+  severity?: 'low' | 'medium' | 'high';
+}
+
 const DashboardPage = () => {
   const { surveyPointId } = useParams<{ surveyPointId: string }>();
   const navigate = useNavigate();
@@ -45,6 +61,15 @@ const DashboardPage = () => {
   const [error, setError] = useState<string | null>(null);
   const [commandStatus, setCommandStatus] = useState<string>('');
   const [mcuCodeReady, setMcuCodeReady] = useState<string | undefined>(undefined);
+
+  // NEW: State cho plant health
+  const [plantHealth, setPlantHealth] = useState<PlantHealthStatus>({
+    disease_name: 'Đang kiểm tra...',
+    confidence: 0,
+    status: 'unknown',
+    detected_at: '',
+  });
+  const [diseaseHistory, setDiseaseHistory] = useState<DiseaseDetectionPayload[]>([]);
 
   useEffect(() => {
     const loadInitialData = async () => {
@@ -192,7 +217,51 @@ const DashboardPage = () => {
             });
           }
         }
-      } else if (message.topic === 'control_response') {
+      } 
+      // NEW: Handle disease detection
+      else if (message.topic === 'disease_detection') {
+        const payload = message.payload as DiseaseDetectionPayload;
+        console.log('Disease detection payload:', payload);
+
+        if (payload.mcu_code === mcuCodeReady) {
+          // Kiểm tra xem cây có khỏe mạnh không
+          const isHealthy = 
+            payload.disease_name.toLowerCase().includes('khỏe') || 
+            payload.disease_name.toLowerCase().includes('healthy') ||
+            payload.disease_name.toLowerCase().includes('normal');
+          
+          // Xác định mức độ nghiêm trọng dựa trên confidence
+          let severity: 'low' | 'medium' | 'high' = 'low';
+          if (!isHealthy) {
+            if (payload.confidence > 0.8) {
+              severity = 'high';
+            } else if (payload.confidence > 0.5) {
+              severity = 'medium';
+            }
+          }
+
+          setPlantHealth({
+            disease_name: payload.disease_name,
+            confidence: payload.confidence,
+            status: isHealthy ? 'healthy' : 'diseased',
+            detected_at: payload.detected_at,
+            severity: isHealthy ? undefined : severity,
+          });
+
+          // Thêm vào lịch sử
+          setDiseaseHistory((prev) => [payload, ...prev.slice(0, 9)]);
+
+          // Hiển thị notification nếu phát hiện bệnh
+          if (!isHealthy && 'Notification' in window && Notification.permission === 'granted') {
+            new Notification('⚠️ Cảnh báo sức khỏe cây trồng', {
+              body: `Phát hiện: ${payload.disease_name} (Độ tin cậy: ${(payload.confidence * 100).toFixed(1)}%)`,
+            });
+          }
+
+          console.log('Plant health updated:', payload.disease_name);
+        }
+      }
+      else if (message.topic === 'control_response') {
         type ControlResponseWithPending = Omit<ControlResponsePayload, 'status'> & {
           command_id?: string;
           survey_point_id?: string;
@@ -329,6 +398,47 @@ const DashboardPage = () => {
     }
   };
 
+  // NEW: Get plant health card styles
+  const getPlantHealthStyles = () => {
+    switch (plantHealth.status) {
+      case 'healthy':
+        return {
+          bg: 'bg-green-50',
+          border: 'border-green-400',
+          text: 'text-green-800',
+          icon: '🌱',
+          iconBg: 'bg-green-100',
+          statusText: 'Cây khỏe mạnh',
+          statusColor: 'text-green-600'
+        };
+      case 'diseased':
+        return {
+          bg: plantHealth.severity === 'high' ? 'bg-red-50' : 
+              plantHealth.severity === 'medium' ? 'bg-orange-50' : 'bg-yellow-50',
+          border: plantHealth.severity === 'high' ? 'border-red-400' :
+                 plantHealth.severity === 'medium' ? 'border-orange-400' : 'border-yellow-400',
+          text: plantHealth.severity === 'high' ? 'text-red-800' :
+                plantHealth.severity === 'medium' ? 'text-orange-800' : 'text-yellow-800',
+          icon: '⚠️',
+          iconBg: plantHealth.severity === 'high' ? 'bg-red-100' :
+                 plantHealth.severity === 'medium' ? 'bg-orange-100' : 'bg-yellow-100',
+          statusText: 'Phát hiện bệnh',
+          statusColor: plantHealth.severity === 'high' ? 'text-red-600' :
+                      plantHealth.severity === 'medium' ? 'text-orange-600' : 'text-yellow-600'
+        };
+      default:
+        return {
+          bg: 'bg-gray-50',
+          border: 'border-gray-300',
+          text: 'text-gray-600',
+          icon: '🔍',
+          iconBg: 'bg-gray-100',
+          statusText: 'Đang kiểm tra',
+          statusColor: 'text-gray-500'
+        };
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -369,6 +479,8 @@ const DashboardPage = () => {
     }
   };
 
+  const healthStyles = getPlantHealthStyles();
+
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="bg-white shadow">
@@ -407,6 +519,65 @@ const DashboardPage = () => {
       </div>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* NEW: Plant Health Status Card - Prominent Display */}
+        <div className={`mb-6 rounded-xl border-2 shadow-lg ${healthStyles.bg} ${healthStyles.border} p-6`}>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-4">
+              <div className={`${healthStyles.iconBg} rounded-full p-4`}>
+                <span className="text-4xl">{healthStyles.icon}</span>
+              </div>
+              <div>
+                <h3 className={`text-2xl font-bold ${healthStyles.text}`}>
+                  Tình trạng cây trồng
+                </h3>
+                <p className={`text-lg font-semibold ${healthStyles.statusColor} mt-1`}>
+                  {plantHealth.disease_name}
+                </p>
+                {plantHealth.confidence > 0 && (
+                  <div className="mt-2">
+                    <div className="flex items-center space-x-2">
+                      <span className={`text-sm ${healthStyles.text}`}>Độ tin cậy:</span>
+                      <div className="flex-1 max-w-xs">
+                        <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+                          <div 
+                            className={`h-full ${
+                              plantHealth.status === 'healthy' ? 'bg-green-500' :
+                              plantHealth.severity === 'high' ? 'bg-red-500' :
+                              plantHealth.severity === 'medium' ? 'bg-orange-500' : 'bg-yellow-500'
+                            }`}
+                            style={{ width: `${plantHealth.confidence * 100}%` }}
+                          />
+                        </div>
+                      </div>
+                      <span className={`text-sm font-bold ${healthStyles.text}`}>
+                        {(plantHealth.confidence * 100).toFixed(1)}%
+                      </span>
+                    </div>
+                  </div>
+                )}
+                {plantHealth.detected_at && (
+                  <p className={`text-xs ${healthStyles.text} opacity-75 mt-2`}>
+                    Cập nhật: {new Date(plantHealth.detected_at).toLocaleString('vi-VN')}
+                  </p>
+                )}
+              </div>
+            </div>
+            <div className="text-right">
+              <span className={`px-4 py-2 rounded-full text-sm font-bold ${healthStyles.iconBg} ${healthStyles.text}`}>
+                {healthStyles.statusText}
+              </span>
+              {plantHealth.severity && (
+                <p className="text-xs mt-2 text-gray-600">
+                  Mức độ: {
+                    plantHealth.severity === 'high' ? 'Cao' :
+                    plantHealth.severity === 'medium' ? 'Trung bình' : 'Thấp'
+                  }
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+
         {plantAlert && (
           <div className={`mb-6 p-6 rounded-lg border-l-4 shadow-lg ${getAlertStyles(plantAlert.severity)} animate-pulse`}>
             <div className="flex items-start justify-between">
@@ -452,7 +623,7 @@ const DashboardPage = () => {
             title="Temperature"
             value={sensorData.temperature}
             unit="°C"
-            icon=""
+            icon="🌡️"
             color="text-red-600"
             bgColor="bg-red-50"
           />
@@ -460,7 +631,7 @@ const DashboardPage = () => {
             title="Humidity"
             value={sensorData.humidity}
             unit="%"
-            icon=""
+            icon="💧"
             color="text-blue-600"
             bgColor="bg-blue-50"
           />
@@ -468,7 +639,7 @@ const DashboardPage = () => {
             title="Soil Moisture"
             value={sensorData.soil_moisture}
             unit="%"
-            icon=""
+            icon="🌾"
             color="text-green-600"
             bgColor="bg-green-50"
           />
@@ -476,11 +647,51 @@ const DashboardPage = () => {
             title="Light"
             value={sensorData.light}
             unit="lux"
-            icon=""
+            icon="☀️"
             color="text-yellow-600"
             bgColor="bg-yellow-50"
           />
         </div>
+
+        {/* NEW: Disease History */}
+        {diseaseHistory.length > 0 && (
+          <div className="mb-8 bg-white rounded-lg shadow p-6">
+            <h2 className="text-xl font-bold text-gray-900 mb-4">Lịch sử kiểm tra bệnh</h2>
+            <div className="space-y-3 max-h-64 overflow-y-auto">
+              {diseaseHistory.map((record, index) => {
+                const isHealthy = record.disease_name.toLowerCase().includes('khỏe') || 
+                                 record.disease_name.toLowerCase().includes('healthy');
+                return (
+                  <div
+                    key={index}
+                    className={`p-3 rounded border-l-4 text-sm ${
+                      isHealthy 
+                        ? 'bg-green-50 border-green-400 text-green-800'
+                        : record.confidence > 0.8
+                          ? 'bg-red-50 border-red-400 text-red-800'
+                          : record.confidence > 0.5
+                            ? 'bg-orange-50 border-orange-400 text-orange-800'
+                            : 'bg-yellow-50 border-yellow-400 text-yellow-800'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <span className="text-xl">{isHealthy ? '🌱' : '⚠️'}</span>
+                        <span className="font-semibold">{record.disease_name}</span>
+                      </div>
+                      <span className="text-xs opacity-75">
+                        {new Date(record.detected_at).toLocaleTimeString('vi-VN')}
+                      </span>
+                    </div>
+                    <p className="mt-1 ml-6 text-xs">
+                      Độ tin cậy: {(record.confidence * 100).toFixed(1)}%
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {alertHistory.length > 0 && (
           <div className="mb-8 bg-white rounded-lg shadow p-6">
