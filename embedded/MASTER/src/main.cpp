@@ -5,10 +5,10 @@
 #include <LoRa.h>
 #include <ArduinoJson.h>
 
-#define WIFI_SSID "KidsLAB"
-#define WIFI_PASSWORD "hoianhHung"
+#define WIFI_SSID "WiFi"
+#define WIFI_PASSWORD "123456789"
 
-#define MQTT_SERVER "192.168.1.104"
+#define MQTT_SERVER "192.168.137.248"
 #define MQTT_PORT 1883
 #define MQTT_USER "admin"
 #define MQTT_PASSWORD "admin123456"
@@ -24,6 +24,7 @@ struct NodeConfig {
 NodeConfig nodeMapping[] = {
   {'A', "7d3c6820-1699-42b7-a6d2-58ece4957c38"},
   {'B', "65c88cda-07c5-4aca-bdf6-9defadf0dc26"},
+  {'C', "c4e56f18-ec8d-4a09-8555-fd88c7886c6e"}
 };
 
 const int NODE_COUNT = sizeof(nodeMapping) / sizeof(NodeConfig);
@@ -109,6 +110,8 @@ void loop() {
     int rssi = LoRa.packetRssi();
     float snr = LoRa.packetSnr();
 
+    Serial.println("[LoRa RECV] " + data);
+
     if (data.startsWith("RESP,")) {
       int idx1 = data.indexOf(',');
       int idx2 = data.indexOf(',', idx1 + 1);
@@ -117,8 +120,12 @@ void loop() {
         char nodeId = data.charAt(idx1 + 1);
         String status = data.substring(idx2 + 1);
 
+        Serial.println("[RESP] NodeID=" + String(nodeId) + " Status=" + status);
+
         for (int i = 0; i < pendingCount; i++) {
           if (pendingCommands[i].pending && pendingCommands[i].nodeId == nodeId) {
+            Serial.println("[RESP] Found pending command for node " + String(nodeId));
+
             StaticJsonDocument<512> doc;
             doc["topic"] = "control_response";
 
@@ -133,9 +140,31 @@ void loop() {
             serializeJson(doc, message);
 
             String topic = "user/" + String(USER_ID) + "/mcu/" + String(MCU_CODE) + "/control/response";
-            mqttClient.publish(topic.c_str(), message.c_str());
+            
+            Serial.println("[MQTT] Publishing to: " + topic);
+            Serial.println("[MQTT] Message: " + message);
+            
+            // IMPORTANT: Check MQTT connection before publishing
+            if (!mqttClient.connected()) {
+              Serial.println("[MQTT] Not connected! Reconnecting...");
+              reconnectMQTT();
+              delay(200); // Wait for reconnect
+            }
+            
+            if (mqttClient.connected()) {
+              bool published = mqttClient.publish(topic.c_str(), message.c_str());
+              if (published) {
+                Serial.println("[MQTT] Published successfully");
+                pendingCommands[i].pending = false;
+              } else {
+                Serial.println("[MQTT] Publish FAILED!");
+                // Keep pending to retry later
+              }
+            } else {
+              Serial.println("[MQTT] Still not connected after reconnect!");
+              // Keep pending to retry later
+            }
 
-            pendingCommands[i].pending = false;
             break;
           }
         }
@@ -177,8 +206,18 @@ void reconnectMQTT() {
   bool connected = mqttClient.connect(clientId.c_str(), MQTT_USER, MQTT_PASSWORD);
 
   if (connected) {
-    mqttClient.subscribe(("system/mcu/" + String(MCU_CODE) + "/control/request").c_str());
-    mqttClient.subscribe(("user/" + String(USER_ID) + "/mcu/" + String(MCU_CODE) + "/control/request").c_str());
+    Serial.println("[MQTT] Connected successfully");
+    
+    String topic1 = "system/mcu/" + String(MCU_CODE) + "/control/request";
+    String topic2 = "user/" + String(USER_ID) + "/mcu/" + String(MCU_CODE) + "/control/request";
+    
+    mqttClient.subscribe(topic1.c_str());
+    Serial.println("[MQTT] Subscribed to: " + topic1);
+    
+    mqttClient.subscribe(topic2.c_str());
+    Serial.println("[MQTT] Subscribed to: " + topic2);
+  } else {
+    Serial.println("[MQTT] Connection failed, rc=" + String(mqttClient.state()));
   }
 }
 
@@ -186,8 +225,16 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   String message = "";
   for (unsigned int i = 0; i < length; i++) message += (char)payload[i];
 
+  Serial.println("\n[MQTT] Message received:");
+  Serial.println("  Topic: " + String(topic));
+  Serial.println("  Payload: " + message);
+
   StaticJsonDocument<512> doc;
-  if (deserializeJson(doc, message)) return;
+  DeserializationError error = deserializeJson(doc, message);
+  if (error) {
+    Serial.println("[MQTT] JSON parse error: " + String(error.c_str()));
+    return;
+  }
 
   handleControlRequest(doc);
 }
@@ -199,12 +246,25 @@ void handleControlRequest(JsonDocument& doc) {
   const char* deviceName = payload["device_name"];
   const char* command = payload["command"];
 
-  if (!surveyPointId || !deviceName || !command) return;
+  Serial.println("[Control Request] Received:");
+  Serial.println("  SurveyPointID: " + String(surveyPointId ? surveyPointId : "NULL"));
+  Serial.println("  DeviceName: " + String(deviceName ? deviceName : "NULL"));
+  Serial.println("  Command: " + String(command ? command : "NULL"));
+
+  if (!surveyPointId || !deviceName || !command) {
+    Serial.println("[Control Request] Missing parameters!");
+    return;
+  }
 
   String nodeIdStr = getNodeId(surveyPointId);
-  if (nodeIdStr.length() == 0) return;
+  if (nodeIdStr.length() == 0) {
+    Serial.println("[Control Request] Unknown surveyPointId: " + String(surveyPointId));
+    return;
+  }
 
   char nodeId = nodeIdStr.charAt(0);
+  Serial.println("[Control Request] Target NodeID: " + String(nodeId));
+  
   sendControlToNode(nodeId, deviceName, command);
 
   if (pendingCount < 10) {
@@ -217,14 +277,22 @@ void handleControlRequest(JsonDocument& doc) {
       true,
       millis()
     };
+    Serial.println("[Control Request] Added to pending list (count=" + String(pendingCount) + ")");
+  } else {
+    Serial.println("[Control Request] WARNING: Pending list full!");
   }
 }
 
 void sendControlToNode(char nodeId, String device, String command) {
   String message = "CMD," + String(nodeId) + "," + device + "," + command;
+  
+  Serial.println("[LoRa SEND] " + message);
+  
   LoRa.beginPacket();
   LoRa.print(message);
   LoRa.endPacket();
+  
+  Serial.println("[LoRa SEND] Command sent successfully");
 }
 
 void parseSensorData(String data, int rssi, float snr) {
