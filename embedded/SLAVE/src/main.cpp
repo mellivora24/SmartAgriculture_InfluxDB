@@ -18,7 +18,7 @@
 #define LORA_FREQUENCY 433E6
 
 // ========== NODE ID ==========
-const char NODE_ID = 'B'; // Thay đổi: 'A', 'B', 'C' cho mỗi node
+const char NODE_ID = 'A'; // Thay đổi: 'A', 'B', 'C' cho mỗi node
 
 // ========== OBJECTS ==========
 DHT dht(DHTPIN, DHTTYPE);
