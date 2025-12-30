@@ -266,16 +266,24 @@ func (h *Handler) triggerAutoPump(ctx context.Context, surveyPointID uuid.UUID, 
 		log.Printf("[MQTT Handler] Error broadcasting auto pump notification: %v", err)
 	}
 
-	log.Printf("[MQTT Handler] ✅ Auto pump command sent successfully: Topic=%s, SurveyPoint=%s, Command=%s, UserID=%s",
+	log.Printf("[MQTT Handler] Auto pump command sent successfully: Topic=%s, SurveyPoint=%s, Command=%s, UserID=%s",
 		mqttTopic, surveyPointID, result.CommandID, userID)
 }
 
 func (h *Handler) onControlResponse(client mqtt.Client, msg mqtt.Message) {
+	log.Printf("[MQTT Handler] ===============================================")
+	log.Printf("[MQTT Handler] Control Response RECEIVED from MQTT")
+	log.Printf("[MQTT Handler] Topic: %s", msg.Topic())
+	log.Printf("[MQTT Handler] Raw Payload: %s", string(msg.Payload()))
+	log.Printf("[MQTT Handler] ===============================================")
+
 	var mqttMsg shared.MQTTMessage
 	if err := json.Unmarshal(msg.Payload(), &mqttMsg); err != nil {
 		log.Printf("[MQTT Handler] Error unmarshaling control response: %v", err)
 		return
 	}
+
+	log.Printf("[MQTT Handler] MQTT Message Topic: %s", mqttMsg.Topic)
 
 	payloadBytes, err := json.Marshal(mqttMsg.Payload)
 	if err != nil {
@@ -283,11 +291,20 @@ func (h *Handler) onControlResponse(client mqtt.Client, msg mqtt.Message) {
 		return
 	}
 
+	log.Printf("[MQTT Handler] Control Payload JSON: %s", string(payloadBytes))
+
 	var controlPayload shared.ControlResponsePayload
 	if err := json.Unmarshal(payloadBytes, &controlPayload); err != nil {
 		log.Printf("[MQTT Handler] Error unmarshaling control payload: %v", err)
 		return
 	}
+
+	log.Printf("[MQTT Handler] Parsed Control Response:")
+	log.Printf("[MQTT Handler]   - SurveyPointID: %s", controlPayload.SurveyPointID)
+	log.Printf("[MQTT Handler]   - MCUCode: %s", controlPayload.MCUCode)
+	log.Printf("[MQTT Handler]   - DeviceName: %s", controlPayload.DeviceName)
+	log.Printf("[MQTT Handler]   - Command: %s", controlPayload.Command)
+	log.Printf("[MQTT Handler]   - Status: %s", controlPayload.Status)
 
 	if controlPayload.SurveyPointID == uuid.Nil {
 		log.Printf("[MQTT Handler] Invalid survey_point_id in control response")
@@ -302,10 +319,14 @@ func (h *Handler) onControlResponse(client mqtt.Client, msg mqtt.Message) {
 		return
 	}
 
+	log.Printf("[MQTT Handler] Found %d commands in history", len(commands))
+
 	var commandID uuid.UUID
 	for _, cmd := range commands {
+		log.Printf("[MQTT Handler]   - Command: ID=%s, Status=%s, Device=%s", cmd.CommandID, cmd.Status, cmd.DeviceName)
 		if cmd.Status == "pending" {
 			commandID = cmd.CommandID
+			log.Printf("[MQTT Handler] Found pending command: %s", commandID)
 			break
 		}
 	}
@@ -316,8 +337,12 @@ func (h *Handler) onControlResponse(client mqtt.Client, msg mqtt.Message) {
 			status = "failed"
 		}
 
+		log.Printf("[MQTT Handler] Updating command %s to status: %s", commandID, status)
+
 		if _, err := h.sensorService.UpdateCommandStatus(ctx, commandID, status); err != nil {
 			log.Printf("[MQTT Handler] Error updating command status: %v", err)
+		} else {
+			log.Printf("[MQTT Handler] Command status updated successfully")
 		}
 
 		// Update auto pump history if this was an auto pump command
@@ -331,9 +356,15 @@ func (h *Handler) onControlResponse(client mqtt.Client, msg mqtt.Message) {
 			h.thresholdService.UpdateAutoPumpStatus(ctx, autoPumpHistory[0].ID, finalStatus, &notes)
 			log.Printf("[MQTT Handler] Auto pump history updated: %s", finalStatus)
 		}
+	} else {
+		log.Printf("[MQTT Handler] No pending command found for this response")
 	}
 
 	// Broadcast response to WebSocket clients
+	log.Printf("[MQTT Handler] Broadcasting to WebSocket clients...")
+	log.Printf("[MQTT Handler]   - MCUCode: %s", controlPayload.MCUCode)
+	log.Printf("[MQTT Handler]   - Payload size: %d bytes", len(payloadBytes))
+
 	wsMsg := shared.WSMessage{
 		Topic:     shared.WSTopicControlResponse,
 		Payload:   payloadBytes,
@@ -342,10 +373,13 @@ func (h *Handler) onControlResponse(client mqtt.Client, msg mqtt.Message) {
 
 	if err := h.wsService.BroadcastToMCU(controlPayload.MCUCode, wsMsg); err != nil {
 		log.Printf("[MQTT Handler] Error broadcasting control response: %v", err)
+	} else {
+		log.Printf("[MQTT Handler] Control response broadcasted successfully!")
 	}
 
 	log.Printf("[MQTT Handler] Processed control response for MCU: %s, Device: %s, Status: %s",
 		controlPayload.MCUCode, controlPayload.DeviceName, controlPayload.Status)
+	log.Printf("[MQTT Handler] ===============================================")
 }
 
 func (h *Handler) onAlert(client mqtt.Client, msg mqtt.Message) {

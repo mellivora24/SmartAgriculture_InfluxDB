@@ -4,5 +4,6 @@
     <file url="file://$PROJECT_DIR$/migrations/001_create_database_up.sql" dialect="PostgreSQL" />
     <file url="file://$PROJECT_DIR$/migrations/003_create_function_up.sql" dialect="PostgreSQL" />
     <file url="file://$PROJECT_DIR$/migrations/004_create_function_down.sql" dialect="PostgreSQL" />
+    <file url="file://$PROJECT_DIR$/migrations/006_delete_sample_data.sql" dialect="PostgreSQL" />
   </component>
 </project>
